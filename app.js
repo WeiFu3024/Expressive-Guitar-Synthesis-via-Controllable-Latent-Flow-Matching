@@ -111,6 +111,56 @@ let lastPlayheadT = null; // last active playback time, kept while paused so a l
 
 const el = (id) => document.getElementById(id);
 
+// Selecting a model/string can hide/show or resize sections above whatever the user is
+// currently looking at (e.g. "Predictor input" only exists for the 2-stage system), and
+// the browser has no way to know what content the user cares about staying put -- it
+// just leaves window.scrollY numerically unchanged, which visually "jumps" to different
+// content once the layout above it grows/shrinks. This finds whichever stable landmark
+// element's top edge is closest to the viewport's top edge before the mutation, then
+// nudges scroll after the mutation so that same element lands at the same screen
+// position again -- ephemeral rebuilt content (individual curve rows/canvases) is
+// deliberately excluded from the candidate set since those get torn down and rebuilt,
+// and <summary> elements are excluded too since two of the three <details> sections can
+// themselves be hidden by the very mutation being measured -- a hidden element's
+// getBoundingClientRect() reports all zeros, which would compute a bogus delta.
+const SCROLL_ANCHOR_SELECTOR = "h1, .panel, .audio-block, h3, .curve-section-header";
+function _captureScrollAnchor() {
+  let anchor = null;
+  let anchorTop = null;
+  for (const candidate of document.querySelectorAll(SCROLL_ANCHOR_SELECTOR)) {
+    const top = candidate.getBoundingClientRect().top;
+    if (anchorTop === null || Math.abs(top) < Math.abs(anchorTop)) {
+      anchor = candidate;
+      anchorTop = top;
+    }
+  }
+  return { anchor, before: anchor ? anchor.getBoundingClientRect().top : null };
+}
+
+function _restoreScrollAnchor({ anchor, before }) {
+  if (anchor && before != null && document.contains(anchor)) {
+    const delta = anchor.getBoundingClientRect().top - before;
+    if (delta !== 0) window.scrollBy(0, delta);
+  }
+}
+
+function preserveScrollPosition(mutate) {
+  const state = _captureScrollAnchor();
+  mutate();
+  _restoreScrollAnchor(state);
+}
+
+// Same idea, but spans an async sequence (e.g. loadSample's awaited fetch + nested
+// loadModel/loadCurves calls) as ONE before/after measurement instead of several small
+// ones -- sequential separate captures can each pick a slightly different anchor as
+// intermediate mutations shift what's closest to the viewport top, compounding into a
+// residual drift none of them individually catches.
+async function preserveScrollPositionAsync(mutate) {
+  const state = _captureScrollAnchor();
+  await mutate();
+  _restoreScrollAnchor(state);
+}
+
 // ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
@@ -143,26 +193,28 @@ async function loadSample(id) {
   currentSample = id;
   const rec = manifest.recordings[id];
 
-  const styleName = STYLE_NAMES[rec.style] || rec.style;
-  el("sampleMeta").textContent =
-    `${styleName} \u00b7 player ${rec.player} \u00b7 ${rec.take} \u00b7 ${rec.duration_s.toFixed(2)}s` +
-    (rec.tier === "practice" ? " \u00b7 practice recording (unscored)" : "");
+  await preserveScrollPositionAsync(async () => {
+    const styleName = STYLE_NAMES[rec.style] || rec.style;
+    el("sampleMeta").textContent =
+      `${styleName} \u00b7 player ${rec.player} \u00b7 ${rec.take} \u00b7 ${rec.duration_s.toFixed(2)}s` +
+      (rec.tier === "practice" ? " \u00b7 practice recording (unscored)" : "");
 
-  const query = el("queryAudio");
-  query.src = `data/${id}/audio/query.mp3`;
-  query.load();
+    const query = el("queryAudio");
+    query.src = `data/${id}/audio/query.mp3`;
+    query.load();
 
-  currentNotes = await fetchJSON(`data/${id}/notes.json`);
-  drawMidiRoll();
-  buildStringLegend(rec.available_strings);
-  buildStringSelectorRow(rec.available_strings);
+    currentNotes = await fetchJSON(`data/${id}/notes.json`);
+    drawMidiRoll();
+    buildStringLegend(rec.available_strings);
+    buildStringSelectorRow(rec.available_strings);
 
-  currentString = rec.available_strings.includes(currentString)
-    ? currentString
-    : rec.available_strings[0];
+    currentString = rec.available_strings.includes(currentString)
+      ? currentString
+      : rec.available_strings[0];
 
-  await loadModel(currentModel);
-  await loadCurves(currentString);
+    await loadModel(currentModel);
+    await loadCurves(currentString);
+  });
 }
 
 async function loadModel(modelId) {
@@ -546,47 +598,49 @@ function buildSynthInputCurves(container, model) {
 function renderModelDependentCurves() {
   if (!currentCurves) return;
 
-  // Predictor input: only the 2-stage system's predictor is conditioned on this.
-  const predSection = el("predictorInputSection");
-  const inputGroup = el("inputCurves");
-  if (currentModel === "main_pipeline") {
-    predSection.hidden = false;
-    buildCurveGroup(inputGroup, INPUT_CHANNELS, currentCurves.inputs);
-  } else {
-    predSection.hidden = true;
-    inputGroup.innerHTML = "";
-    clearContainerCanvases(inputGroup);
-  }
-
-  // Synthesizer input: differs per system, ddsp-guitar shows nothing at all.
-  const synthSection = el("synthInputSection");
-  const title = el("synthInputTitle");
-  const note = el("synthInputNote");
-  const group = el("synthInputCurves");
-  group.innerHTML = "";
-  clearContainerCanvases(group);
-
-  if (currentModel === "ddsp_guitar") {
-    synthSection.hidden = true;
-  } else {
-    synthSection.hidden = false;
+  preserveScrollPosition(() => {
+    // Predictor input: only the 2-stage system's predictor is conditioned on this.
+    const predSection = el("predictorInputSection");
+    const inputGroup = el("inputCurves");
     if (currentModel === "main_pipeline") {
-      title.textContent = "Synthesizer input";
-      note.hidden = false;
-      note.textContent = "Faint dashed line: ground-truth, not fed to the synth";
-      buildSynthInputCurves(group, "main_pipeline");
-    } else if (currentModel === "velocity_joint_peak") {
-      title.textContent = "Synthesizer input";
-      note.hidden = true;
-      buildSynthInputCurves(group, "velocity_joint_peak");
-    } else if (currentModel === "ground_truth") {
-      title.textContent = "Ground truth curve";
-      note.hidden = true;
-      buildCurveGroup(group, TARGET_CHANNELS, currentCurves.target_gt);
+      predSection.hidden = false;
+      buildCurveGroup(inputGroup, INPUT_CHANNELS, currentCurves.inputs);
+    } else {
+      predSection.hidden = true;
+      inputGroup.innerHTML = "";
+      clearContainerCanvases(inputGroup);
     }
-  }
 
-  renderComparisonPlot();
+    // Synthesizer input: differs per system, ddsp-guitar shows nothing at all.
+    const synthSection = el("synthInputSection");
+    const title = el("synthInputTitle");
+    const note = el("synthInputNote");
+    const group = el("synthInputCurves");
+    group.innerHTML = "";
+    clearContainerCanvases(group);
+
+    if (currentModel === "ddsp_guitar") {
+      synthSection.hidden = true;
+    } else {
+      synthSection.hidden = false;
+      if (currentModel === "main_pipeline") {
+        title.textContent = "Synthesizer input";
+        note.hidden = false;
+        note.textContent = "Faint dashed line: ground-truth, not fed to the synth";
+        buildSynthInputCurves(group, "main_pipeline");
+      } else if (currentModel === "velocity_joint_peak") {
+        title.textContent = "Synthesizer input";
+        note.hidden = true;
+        buildSynthInputCurves(group, "velocity_joint_peak");
+      } else if (currentModel === "ground_truth") {
+        title.textContent = "Ground truth curve";
+        note.hidden = true;
+        buildCurveGroup(group, TARGET_CHANNELS, currentCurves.target_gt);
+      }
+    }
+
+    renderComparisonPlot();
+  });
 }
 
 // ---------------------------------------------------------------------------
