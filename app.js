@@ -464,6 +464,35 @@ function _drawSeries(ctx, t, v, xOf, yOf) {
   ctx.stroke();
 }
 
+function _formatAxisValue(v) {
+  const abs = Math.abs(v);
+  if (abs >= 100) return Math.round(v).toString();
+  if (abs >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+// Shared left margin reserved for y-axis tick labels, so every row in a curve-group
+// (line curves, the voiced block, the onset/voiced strip) lines up on the same x origin
+// even though only the numeric line curves actually draw tick labels into it.
+const Y_AXIS_PAD_L = 44;
+
+function _drawYAxisTicks(ctx, minV, maxV, yOf, padL, padR, width) {
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const val of [maxV, (minV + maxV) / 2, minV]) {
+    const y = Math.round(yOf(val)) + 0.5;
+    ctx.strokeStyle = "rgba(0,0,0,0.08)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(width - padR, y);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillText(_formatAxisValue(val), padL - 6, y);
+  }
+}
+
 function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -480,8 +509,11 @@ function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
   const duration = (currentCurves && currentCurves.duration_s) || (t.length ? t[t.length - 1] : 1);
   const padT = 6;
   const padB = 6;
+  const padL = Y_AXIS_PAD_L;
+  const padR = 6;
   const plotH = height - padT - padB;
-  const xOf = (tt) => (tt / duration) * width;
+  const plotW = width - padL - padR;
+  const xOf = (tt) => padL + (tt / duration) * plotW;
 
   if (name === "voiced") {
     // binary block, matches plot_ctrl_preview.py's _plot_block: a filled gray span
@@ -522,6 +554,8 @@ function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
     maxV += margin;
     const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
 
+    _drawYAxisTicks(ctx, minV, maxV, yOf, padL, padR, width);
+
     if (overlayChan) {
       ctx.save();
       ctx.globalAlpha = 0.4;
@@ -552,7 +586,10 @@ function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, playheadT) {
   ctx.clearRect(0, 0, width, height);
 
   const duration = (currentCurves && currentCurves.duration_s) || 1;
-  const xOf = (tt) => (tt / duration) * width;
+  const padL = Y_AXIS_PAD_L;
+  const padR = 6;
+  const plotW = width - padL - padR;
+  const xOf = (tt) => padL + (tt / duration) * plotW;
 
   // gray voiced blocks
   const t = voicedChan.t;
@@ -669,7 +706,7 @@ function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
   ctx.clearRect(0, 0, width, height);
 
   const duration = (currentCurves && currentCurves.duration_s) || 1;
-  const padL = 6;
+  const padL = Y_AXIS_PAD_L;
   const padR = 6;
   const padT = 8;
   const padB = 8;
@@ -693,7 +730,6 @@ function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
       }
     }
   }
-
 
   let minV = Infinity;
   let maxV = -Infinity;
@@ -719,6 +755,8 @@ function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
   minV -= margin;
   maxV += margin;
   const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
+
+  _drawYAxisTicks(ctx, minV, maxV, yOf, padL, padR, width);
 
   for (const arm of COMPARE_ORDER) {
     if (!compareVisible[arm]) continue;
