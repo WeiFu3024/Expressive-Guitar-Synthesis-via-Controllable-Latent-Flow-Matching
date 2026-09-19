@@ -22,11 +22,11 @@ const MODELS = [
 // tab10 colors matplotlib names in scripts/pipeline/plot_ctrl_preview.py's COLORS map to,
 // so channel colors here match that script's PNGs exactly.
 const TAB_COLORS = {
-  "tab:blue": "#4c78ff",
-  "tab:orange": "#ff9f40",
-  "tab:green": "#48c774",
-  "tab:purple": "#b57bff",
-  "tab:red": "#ff5c5c",
+  "tab:blue": "#2f6fed",
+  "tab:orange": "#e0820a",
+  "tab:green": "#1f9d55",
+  "tab:purple": "#8b5cf6",
+  "tab:red": "#e0393e",
 };
 
 const INPUT_CHANNELS = [
@@ -41,12 +41,12 @@ const TARGET_CHANNELS = ["pitch", "envelope"];
 // distinct per-string colors for the MIDI piano-roll (low E -> high e), independent of
 // the control-curve channel palette above.
 const STRING_COLORS = [
-  "#ff5c5c", // string 1 - low E
-  "#ff9f40", // string 2 - A
-  "#f6d551", // string 3 - D
-  "#48c774", // string 4 - G
-  "#4c9bff", // string 5 - B
-  "#b57bff", // string 6 - high e
+  "#e0393e", // string 1 - low E
+  "#e0820a", // string 2 - A
+  "#c9a227", // string 3 - D
+  "#1f9d55", // string 4 - G
+  "#2f6fed", // string 5 - B
+  "#8b5cf6", // string 6 - high e
 ];
 const STRING_NAMES = ["Low E", "A", "D", "G", "B", "High E"];
 
@@ -55,10 +55,10 @@ const STRING_NAMES = ["Low E", "A", "D", "G", "B", "High E"];
 // synthesized systems' lines aren't hidden behind it).
 const COMPARE_ORDER = ["ground_truth", "main_pipeline", "velocity_joint_peak", "ddsp_guitar"];
 const ARM_COMPARE_COLORS = {
-  ground_truth: "#c9cdd6",
-  main_pipeline: "#4da3ff",
-  velocity_joint_peak: "#ff9f40",
-  ddsp_guitar: "#b57bff",
+  ground_truth: "#6b7280",
+  main_pipeline: "#2f6fed",
+  velocity_joint_peak: "#e0820a",
+  ddsp_guitar: "#8b5cf6",
 };
 
 // Per-legend-item click toggles a system's line on/off in both comparison canvases, so
@@ -223,7 +223,7 @@ function niceTimeStep(duration) {
 function drawMidiRoll(playheadT) {
   const canvas = el("midiCanvas");
   const cssWidth = Math.max(canvas.clientWidth, 300);
-  const cssHeight = 260;
+  const cssHeight = 300;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(cssWidth * dpr);
   canvas.height = Math.round(cssHeight * dpr);
@@ -238,7 +238,7 @@ function drawMidiRoll(playheadT) {
   const minPitch = MIDI_PITCH_MIN;
   const maxPitch = MIDI_PITCH_MAX;
 
-  const padL = 34;
+  const padL = 38;
   const padR = 8;
   const padT = 8;
   const padB = 20;
@@ -248,20 +248,20 @@ function drawMidiRoll(playheadT) {
   const yOf = (p) => padT + (1 - (p - minPitch) / (maxPitch - minPitch)) * plotH;
 
   // horizontal guide line + "Cn" label at every octave (C2, C3, ... C6)
-  ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.font = "12px -apple-system, BlinkMacSystemFont, sans-serif";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   for (let p = minPitch; p <= maxPitch; p += 12) {
     const y = Math.round(yOf(p)) + 0.5;
     ctx.strokeStyle = p === minPitch || p === maxPitch
-      ? "rgba(255,255,255,0.18)"
-      : "rgba(255,255,255,0.08)";
+      ? "rgba(0,0,0,0.22)"
+      : "rgba(0,0,0,0.09)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padL, y);
     ctx.lineTo(width - padR, y);
     ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillText(`C${p / 12 - 1}`, padL - 6, y);
   }
 
@@ -271,18 +271,18 @@ function drawMidiRoll(playheadT) {
   const step = niceTimeStep(duration);
   for (let t = 0; t <= duration + 1e-6; t += step) {
     const x = Math.round(xOf(t)) + 0.5;
-    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.strokeStyle = "rgba(0,0,0,0.07)";
     ctx.beginPath();
     ctx.moveTo(x, padT);
     ctx.lineTo(x, height - padB);
     ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillText(`${Math.round(t)}s`, x, height - padB + 4);
   }
 
   // fixed, sane note thickness (independent of pitch-range span, which was the source of
   // the "incredibly thick" notes -- it used to scale with plotH / (maxPitch-minPitch))
-  const noteH = 7;
+  const noteH = 9;
   for (const sKey of Object.keys(currentNotes)) {
     const sIdx = parseInt(sKey, 10) - 1;
     ctx.fillStyle = STRING_COLORS[sIdx];
@@ -318,7 +318,7 @@ function drawPlayhead(ctx, xOf, height, t, duration, yTop, yBottom) {
   const x = Math.round(xOf(clamped)) + 0.5;
   const y0 = yTop == null ? 0 : yTop;
   const y1 = yBottom == null ? height : yBottom;
-  ctx.strokeStyle = "#ffffff";
+  ctx.strokeStyle = "#1b1f27";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(x, y0);
@@ -424,7 +424,7 @@ function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
   if (name === "voiced") {
     // binary block, matches plot_ctrl_preview.py's _plot_block: a filled gray span
     // wherever the mask is truthy, nothing drawn otherwise.
-    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.fillStyle = "rgba(0,0,0,0.12)";
     let runStart = null;
     for (let i = 0; i < v.length; i++) {
       const on = v[i] != null && v[i] > 0.5;
@@ -463,14 +463,14 @@ function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
     if (overlayChan) {
       ctx.save();
       ctx.globalAlpha = 0.4;
-      ctx.strokeStyle = "#ffffff";
+      ctx.strokeStyle = "#5d6673";
       ctx.lineWidth = 1.3;
       ctx.setLineDash([3, 3]);
       _drawSeries(ctx, overlayChan.t, overlayChan.v, xOf, yOf);
       ctx.restore();
     }
 
-    ctx.strokeStyle = TAB_COLORS[chan.color] || "#4c78ff";
+    ctx.strokeStyle = TAB_COLORS[chan.color] || "#2f6fed";
     ctx.lineWidth = 1.6;
     _drawSeries(ctx, t, v, xOf, yOf);
   }
@@ -495,7 +495,7 @@ function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, playheadT) {
   // gray voiced blocks
   const t = voicedChan.t;
   const v = voicedChan.v;
-  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.fillStyle = "rgba(0,0,0,0.12)";
   let runStart = null;
   for (let i = 0; i < v.length; i++) {
     const on = v[i] != null && v[i] > 0.5;
@@ -507,7 +507,7 @@ function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, playheadT) {
   }
 
   // black onset ticks, drawn on top of the voiced blocks
-  ctx.strokeStyle = "#0c0e13";
+  ctx.strokeStyle = "#1b1f27";
   ctx.lineWidth = 2;
   for (const ot of onsetTimes) {
     const x = Math.round(xOf(ot)) + 0.5;
@@ -616,7 +616,7 @@ function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
   // faint gray background wherever the real recording actually has a note sounding
   // (ground-truth voiced mask), drawn first so every line stays fully legible on top.
   if (voicedMask) {
-    ctx.fillStyle = "rgba(255,255,255,0.09)";
+    ctx.fillStyle = "rgba(0,0,0,0.07)";
     let runStart = null;
     const vt = voicedMask.t;
     const vv = voicedMask.v;
