@@ -1170,11 +1170,18 @@ function createVelocityStudy(rootId) {
   const queryAudio = root.querySelector(".query-audio");
   const modelAudio = root.querySelector("#velocityModelAudio");
   const modelRow = root.querySelector("#velocityModelSelectorRow");
+  const stringSelectorRow = root.querySelector("#velocityStringSelectorRow");
+  const stringAudio = root.querySelector("#velocityStringAudio");
   const canvas = root.querySelector("#velocityCanvas");
   const legendEl = root.querySelector("#velocityLegend");
   const noteEl = root.querySelector("#velocityNote");
 
-  const state = { model: VELOCITY_MODELS[0].id, velocity: null, stringVisible: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true } };
+  const state = {
+    model: VELOCITY_MODELS[0].id,
+    velocity: null,
+    string: null,
+    stringVisible: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true },
+  };
 
   function buildModelRow() {
     modelRow.innerHTML = "";
@@ -1196,6 +1203,47 @@ function createVelocityStudy(rootId) {
     modelAudio.load();
   }
 
+  function refreshStringAudio() {
+    if (!picker.state.sample || !state.string) return;
+    if (currentAudioEl === stringAudio) currentAudioEl.pause();
+    stringAudio.src = `data/${picker.state.sample}/audio/strings/${state.model}/string${state.string}.mp3`;
+    stringAudio.load();
+  }
+
+  function buildStringSelectorRow(strings) {
+    stringSelectorRow.innerHTML = "";
+    for (const s of strings) {
+      const btn = document.createElement("button");
+      btn.className = "pill-btn";
+      btn.dataset.string = s;
+      btn.title = `String ${s} (${STRING_NAMES[s - 1]})`;
+      btn.textContent = String(s);
+      btn.classList.toggle("active", s === state.string);
+      btn.addEventListener("click", () => selectString(s));
+      stringSelectorRow.appendChild(btn);
+    }
+  }
+
+  // Selecting a string both drives the single-string audio player AND becomes the sole
+  // default-visible line on the velocity comparison plot below -- the other 5 strings
+  // stay togglable via the legend, just not shown until the reader asks for them.
+  function selectString(stringNum) {
+    state.string = stringNum;
+    for (const btn of stringSelectorRow.querySelectorAll(".pill-btn")) {
+      btn.classList.toggle("active", parseInt(btn.dataset.string, 10) === stringNum);
+    }
+    for (const s of [1, 2, 3, 4, 5, 6]) state.stringVisible[s] = s === stringNum;
+    updateVelocityLegendState();
+    refreshStringAudio();
+    renderVelocityPlot();
+  }
+
+  function updateVelocityLegendState() {
+    for (const btn of legendEl.querySelectorAll(".legend-item")) {
+      btn.classList.toggle("off", !state.stringVisible[btn.dataset.string]);
+    }
+  }
+
   function buildVelocityLegend() {
     legendEl.innerHTML = "";
     for (const s of [1, 2, 3, 4, 5, 6]) {
@@ -1210,7 +1258,6 @@ function createVelocityStudy(rootId) {
       item.appendChild(swatch);
       item.appendChild(document.createTextNode(`String ${s} (${STRING_NAMES[s - 1]})`));
       item.title = "Click to show/hide this string's line";
-      item.classList.toggle("off", !state.stringVisible[key]);
       item.addEventListener("click", () => {
         state.stringVisible[key] = !state.stringVisible[key];
         item.classList.toggle("off", !state.stringVisible[key]);
@@ -1218,6 +1265,7 @@ function createVelocityStudy(rootId) {
       });
       legendEl.appendChild(item);
     }
+    updateVelocityLegendState();
   }
 
   function renderVelocityPlot() {
@@ -1241,16 +1289,18 @@ function createVelocityStudy(rootId) {
       btn.classList.toggle("active", btn.dataset.model === modelId);
     }
     refreshModelAudio();
+    refreshStringAudio();
     renderVelocityPlot();
   }
 
-  picker.onSelect(async () => {
+  picker.onSelect(async (rec) => {
     if (currentAudioEl === queryAudio) currentAudioEl.pause();
     queryAudio.src = `data/${picker.state.sample}/audio/query.mp3`;
     queryAudio.load();
     refreshModelAudio();
     state.velocity = await fetchJSON(`data/${picker.state.sample}/velocity.json`);
-    renderVelocityPlot();
+    buildStringSelectorRow(rec.available_strings);
+    selectString(mostActiveString(rec.available_strings, picker.state.notes));
   });
 
   root.addEventListener("toggle", () => {
@@ -1266,6 +1316,7 @@ function createVelocityStudy(rootId) {
   buildVelocityLegend();
   registerExclusive(queryAudio);
   registerExclusive(modelAudio);
+  registerExclusive(stringAudio);
 
   return { picker, loadSample: (id) => picker.selectSample(id) };
 }
