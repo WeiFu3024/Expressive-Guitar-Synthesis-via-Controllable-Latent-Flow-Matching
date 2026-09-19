@@ -43,38 +43,6 @@ const MODELS = [
   },
 ];
 
-// Which curve each system's target-curve panel actually shows. Only main_pipeline has a
-// real per-frame stage-2 prediction (pe_note_shape_fixed13's own output, "target_predicted"
-// in the exported JSON); ground_truth's panel is the real recording's own CREPE/RMS
-// curve ("target_gt"); the other two systems don't produce or expose a comparable
-// per-frame curve at all, so their panel says so instead of silently reusing ground
-// truth as if it were a prediction.
-const MODEL_CURVE_INFO = {
-  main_pipeline: {
-    source: "target_predicted",
-    title: "Predicted performance curves (pe_note_shape_fixed13's own stage-2 output)",
-  },
-  ground_truth: {
-    source: "target_gt",
-    title: "Ground-truth performance curves (CREPE pitch / log-RMS envelope)",
-  },
-  velocity_joint_peak: {
-    source: null,
-    title: "Predicted performance curves",
-    note:
-      "Not available \u2014 this baseline bypasses the stage-2 predictor entirely (flat " +
-      "MIDI pitch + peak pseudo-velocity feeds the synth directly, no per-frame curve " +
-      "is produced).",
-  },
-  ddsp_guitar: {
-    source: null,
-    title: "Predicted performance curves",
-    note:
-      "Not available \u2014 public erl-j/ddsp-guitar-unified checkpoint; its internal " +
-      "pitch-correction curve isn't exposed by this pipeline.",
-  },
-};
-
 // tab10 colors matplotlib names in scripts/pipeline/plot_ctrl_preview.py's COLORS map to,
 // so channel colors here match that script's PNGs exactly.
 const TAB_COLORS = {
@@ -106,6 +74,17 @@ const STRING_COLORS = [
 ];
 const STRING_NAMES = ["Low E", "A", "D", "G", "B", "High E"];
 
+// Output-comparison plot: one fixed color per system, independent of the string/channel
+// palettes above, and the draw order (ground truth drawn first/underneath, so the three
+// synthesized systems' lines aren't hidden behind it).
+const COMPARE_ORDER = ["ground_truth", "main_pipeline", "velocity_joint_peak", "ddsp_guitar"];
+const ARM_COMPARE_COLORS = {
+  ground_truth: "#c9cdd6",
+  main_pipeline: "#4da3ff",
+  velocity_joint_peak: "#ff9f40",
+  ddsp_guitar: "#b57bff",
+};
+
 // ---------------------------------------------------------------------------
 // Exclusive audio playback: never two clips at once.
 // ---------------------------------------------------------------------------
@@ -120,7 +99,7 @@ function registerExclusive(el) {
 
 // ---------------------------------------------------------------------------
 // Shared playhead: whichever registered <audio> is currently playing drives every
-// visualization (MIDI roll + both curve groups) via one rAF loop.
+// visualization (MIDI roll + every curve/comparison panel) via one rAF loop.
 // ---------------------------------------------------------------------------
 
 const playheadListeners = [];
@@ -145,7 +124,7 @@ let currentSample = null;
 let currentModel = MODELS[0].id;
 let currentString = 1;
 let currentNotes = null; // {"1": [...], ...}
-let currentCurves = null; // parsed string<N>.json
+let currentCurves = null; // parsed string<N>.json: {inputs, target_gt, synth_input, comparison}
 
 const el = (id) => document.getElementById(id);
 
@@ -193,19 +172,11 @@ async function loadSample(id) {
   currentNotes = await fetchJSON(`data/${id}/notes.json`);
   drawMidiRoll();
   buildStringLegend(rec.available_strings);
+  buildStringSelectorRow(rec.available_strings);
 
-  const stringSelect = el("stringSelect");
-  stringSelect.innerHTML = "";
-  for (const s of rec.available_strings) {
-    const opt = document.createElement("option");
-    opt.value = s;
-    opt.textContent = `String ${s} (${STRING_NAMES[s - 1]})`;
-    stringSelect.appendChild(opt);
-  }
   currentString = rec.available_strings.includes(currentString)
     ? currentString
     : rec.available_strings[0];
-  stringSelect.value = currentString;
 
   await loadModel(currentModel);
   await loadCurves(currentString);
@@ -214,7 +185,7 @@ async function loadSample(id) {
 async function loadModel(modelId) {
   if (currentAudioEl === el("modelAudio")) currentAudioEl.pause();
   currentModel = modelId;
-  for (const btn of document.querySelectorAll(".model-select-btn")) {
+  for (const btn of document.querySelectorAll("#modelSelectorRow .pill-btn")) {
     btn.classList.toggle("active", btn.dataset.model === modelId);
   }
   const meta = MODELS.find((m) => m.id === modelId);
@@ -224,35 +195,16 @@ async function loadModel(modelId) {
   audio.src = `data/${currentSample}/audio/${modelId}.mp3`;
   audio.load();
 
-  renderTargetCurves();
-}
-
-function renderTargetCurves() {
-  const info = MODEL_CURVE_INFO[currentModel];
-  el("targetCurvesTitle").textContent = info.title;
-  const group = el("targetCurves");
-  const note = el("targetCurvesNote");
-
-  if (!info.source || !currentCurves) {
-    for (let i = curveCanvases.length - 1; i >= 0; i--) {
-      if (curveCanvases[i].container === group) curveCanvases.splice(i, 1);
-    }
-    group.innerHTML = "";
-    group.hidden = true;
-    note.hidden = false;
-    note.textContent = info.note || "Not available for this recording/string.";
-    return;
-  }
-  group.hidden = false;
-  note.hidden = true;
-  buildCurveGroup(group, TARGET_CHANNELS, currentCurves[info.source]);
+  renderModelDependentCurves();
 }
 
 async function loadCurves(stringNum) {
   currentString = stringNum;
+  for (const btn of document.querySelectorAll("#stringSelectorRow .pill-btn")) {
+    btn.classList.toggle("active", parseInt(btn.dataset.string, 10) === stringNum);
+  }
   currentCurves = await fetchJSON(`data/${currentSample}/ctrl/string${stringNum}.json`);
-  buildCurveGroup(el("inputCurves"), INPUT_CHANNELS, currentCurves.inputs);
-  renderTargetCurves();
+  renderModelDependentCurves();
 }
 
 // ---------------------------------------------------------------------------
@@ -393,35 +345,82 @@ function drawPlayhead(ctx, xOf, height, t, duration, yTop, yBottom) {
 }
 
 // ---------------------------------------------------------------------------
-// Control-curve mini panels
+// Playhead-canvas registry: every canvas that needs to redraw on each rAF tick
+// registers a draw(playheadT) closure here, keyed by its own canvas element (dedup) and
+// by a "container" used to bulk-evict stale entries when a container's canvases are
+// thrown away and rebuilt from scratch (buildCurveGroup, buildSynthInputCurves, ...).
 // ---------------------------------------------------------------------------
 
-const curveCanvases = []; // {canvas, channel} for playhead redraw
+const playheadCanvases = [];
 
-function buildCurveGroup(container, channels, dataByChannel) {
-  container.innerHTML = "";
-  // remove any stale entries for this container before repopulating
-  for (let i = curveCanvases.length - 1; i >= 0; i--) {
-    if (curveCanvases[i].container === container) curveCanvases.splice(i, 1);
+function registerPlayheadCanvas(canvas, container, drawFn) {
+  for (let i = playheadCanvases.length - 1; i >= 0; i--) {
+    if (playheadCanvases[i].canvas === canvas) playheadCanvases.splice(i, 1);
   }
-  for (const name of channels) {
-    const chan = dataByChannel[name];
-    if (!chan) continue;
-    const row = document.createElement("div");
-    row.className = "curve-row";
-    const label = document.createElement("div");
-    label.className = "curve-label";
-    label.textContent = chan.label;
-    const canvas = document.createElement("canvas");
-    row.appendChild(label);
-    row.appendChild(canvas);
-    container.appendChild(row);
-    curveCanvases.push({ canvas, chan, name, container });
-    drawCurvePanel(canvas, chan, name);
+  playheadCanvases.push({ canvas, container, draw: drawFn });
+}
+
+function clearContainerCanvases(container) {
+  for (let i = playheadCanvases.length - 1; i >= 0; i--) {
+    if (playheadCanvases[i].container === container) playheadCanvases.splice(i, 1);
   }
 }
 
-function drawCurvePanel(canvas, chan, name, playheadT) {
+function redrawAllCurves(playheadT) {
+  for (const entry of playheadCanvases) entry.draw(playheadT);
+}
+
+// ---------------------------------------------------------------------------
+// Control-curve mini panels
+// ---------------------------------------------------------------------------
+
+function _addCurveRow(container, labelText) {
+  const row = document.createElement("div");
+  row.className = "curve-row";
+  const label = document.createElement("div");
+  label.className = "curve-label";
+  label.textContent = labelText;
+  const canvas = document.createElement("canvas");
+  row.appendChild(label);
+  row.appendChild(canvas);
+  container.appendChild(row);
+  return canvas;
+}
+
+function buildCurveGroup(container, channels, dataByChannel) {
+  container.innerHTML = "";
+  clearContainerCanvases(container);
+  for (const name of channels) {
+    const chan = dataByChannel[name];
+    if (!chan) continue;
+    const canvas = _addCurveRow(container, chan.label);
+    const draw = (t) => drawCurvePanel(canvas, chan, name, t);
+    registerPlayheadCanvas(canvas, container, draw);
+    draw(null);
+  }
+}
+
+function _drawSeries(ctx, t, v, xOf, yOf) {
+  ctx.beginPath();
+  let drawing = false;
+  for (let i = 0; i < t.length; i++) {
+    if (v[i] == null) {
+      drawing = false;
+      continue;
+    }
+    const x = xOf(t[i]);
+    const y = yOf(v[i]);
+    if (!drawing) {
+      ctx.moveTo(x, y);
+      drawing = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+}
+
+function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(rect.width, 200);
@@ -434,9 +433,7 @@ function drawCurvePanel(canvas, chan, name, playheadT) {
 
   const t = chan.t;
   const v = chan.v;
-  const duration =
-    (currentCurves && currentCurves.duration_s) ||
-    (t.length ? t[t.length - 1] : 1);
+  const duration = (currentCurves && currentCurves.duration_s) || (t.length ? t[t.length - 1] : 1);
   const padT = 6;
   const padB = 6;
   const plotH = height - padT - padB;
@@ -451,7 +448,7 @@ function drawCurvePanel(canvas, chan, name, playheadT) {
       const on = v[i] != null && v[i] > 0.5;
       if (on && runStart == null) runStart = t[i];
       if ((!on || i === v.length - 1) && runStart != null) {
-        const end = on ? t[i] : t[i];
+        const end = t[i];
         ctx.fillRect(xOf(runStart), padT, Math.max(xOf(end) - xOf(runStart), 1), plotH);
         runStart = null;
       }
@@ -459,11 +456,15 @@ function drawCurvePanel(canvas, chan, name, playheadT) {
   } else {
     let minV = Infinity;
     let maxV = -Infinity;
-    for (const val of v) {
-      if (val == null) continue;
-      minV = Math.min(minV, val);
-      maxV = Math.max(maxV, val);
-    }
+    const scan = (arr) => {
+      for (const val of arr) {
+        if (val == null) continue;
+        minV = Math.min(minV, val);
+        maxV = Math.max(maxV, val);
+      }
+    };
+    scan(v);
+    if (overlayChan) scan(overlayChan.v);
     if (!isFinite(minV)) {
       drawPlayhead(ctx, xOf, height, playheadT, duration);
       return;
@@ -477,34 +478,231 @@ function drawCurvePanel(canvas, chan, name, playheadT) {
     maxV += margin;
     const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
 
+    if (overlayChan) {
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.3;
+      ctx.setLineDash([3, 3]);
+      _drawSeries(ctx, overlayChan.t, overlayChan.v, xOf, yOf);
+      ctx.restore();
+    }
+
     ctx.strokeStyle = TAB_COLORS[chan.color] || "#4c78ff";
     ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    let drawing = false;
-    for (let i = 0; i < t.length; i++) {
-      if (v[i] == null) {
-        drawing = false;
-        continue;
-      }
-      const x = xOf(t[i]);
-      const y = yOf(v[i]);
-      if (!drawing) {
-        ctx.moveTo(x, y);
-        drawing = true;
-      } else {
-        ctx.lineTo(x, y);
-      }
+    _drawSeries(ctx, t, v, xOf, yOf);
+  }
+
+  drawPlayhead(ctx, xOf, height, playheadT, duration);
+}
+
+function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, playheadT) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(rect.width, 200);
+  const height = Math.max(rect.height, 40);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const duration = (currentCurves && currentCurves.duration_s) || 1;
+  const xOf = (tt) => (tt / duration) * width;
+
+  // gray voiced blocks
+  const t = voicedChan.t;
+  const v = voicedChan.v;
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  let runStart = null;
+  for (let i = 0; i < v.length; i++) {
+    const on = v[i] != null && v[i] > 0.5;
+    if (on && runStart == null) runStart = t[i];
+    if ((!on || i === v.length - 1) && runStart != null) {
+      ctx.fillRect(xOf(runStart), 4, Math.max(xOf(t[i]) - xOf(runStart), 1), height - 8);
+      runStart = null;
     }
+  }
+
+  // black onset ticks, drawn on top of the voiced blocks
+  ctx.strokeStyle = "#0c0e13";
+  ctx.lineWidth = 2;
+  for (const ot of onsetTimes) {
+    const x = Math.round(xOf(ot)) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x, 2);
+    ctx.lineTo(x, height - 2);
     ctx.stroke();
   }
 
   drawPlayhead(ctx, xOf, height, playheadT, duration);
 }
 
-function redrawAllCurves(playheadT) {
-  for (const { canvas, chan, name } of curveCanvases) {
-    drawCurvePanel(canvas, chan, name, playheadT);
+function buildSynthInputCurves(container, model) {
+  container.innerHTML = "";
+  clearContainerCanvases(container);
+  const synth = currentCurves.synth_input[model];
+  const overlay = model === "main_pipeline" ? currentCurves.target_gt : null;
+
+  for (const name of TARGET_CHANNELS) {
+    const chan = synth[name];
+    const canvas = _addCurveRow(container, chan.label);
+    const overlayChan = overlay ? overlay[name] : null;
+    const draw = (t) => drawCurvePanel(canvas, chan, name, t, overlayChan);
+    registerPlayheadCanvas(canvas, container, draw);
+    draw(null);
   }
+
+  if (model === "main_pipeline") {
+    const canvas = _addCurveRow(container, "onset (tick) / voiced (block) \u2014 fed to synth");
+    const draw = (t) => drawOnsetVoicedPanel(canvas, synth.voiced, synth.onset_t, t);
+    registerPlayheadCanvas(canvas, container, draw);
+    draw(null);
+  }
+}
+
+function renderModelDependentCurves() {
+  if (!currentCurves) return;
+
+  // Predictor input: only the 2-stage system's predictor is conditioned on this.
+  const predSection = el("predictorInputSection");
+  const inputGroup = el("inputCurves");
+  if (currentModel === "main_pipeline") {
+    predSection.hidden = false;
+    buildCurveGroup(inputGroup, INPUT_CHANNELS, currentCurves.inputs);
+  } else {
+    predSection.hidden = true;
+    inputGroup.innerHTML = "";
+    clearContainerCanvases(inputGroup);
+  }
+
+  // Synthesizer input: differs per system, ddsp-guitar shows nothing at all.
+  const synthSection = el("synthInputSection");
+  const title = el("synthInputTitle");
+  const note = el("synthInputNote");
+  const group = el("synthInputCurves");
+  group.innerHTML = "";
+  clearContainerCanvases(group);
+
+  if (currentModel === "ddsp_guitar") {
+    synthSection.hidden = true;
+  } else {
+    synthSection.hidden = false;
+    if (currentModel === "main_pipeline") {
+      title.textContent = "Synthesizer input \u2014 predicted curve, actually fed to the synth";
+      note.hidden = false;
+      note.textContent = "Faint dashed line: ground-truth pitch/envelope, shown for " +
+        "reference only \u2014 not fed to the synth.";
+      buildSynthInputCurves(group, "main_pipeline");
+    } else if (currentModel === "velocity_joint_peak") {
+      title.textContent =
+        "Synthesizer input \u2014 flat nominal pitch + constant peak velocity, actually fed to the synth";
+      note.hidden = true;
+      buildSynthInputCurves(group, "velocity_joint_peak");
+    } else if (currentModel === "ground_truth") {
+      title.textContent = "Ground-truth performance curve (CREPE pitch / log-RMS envelope)";
+      note.hidden = true;
+      buildCurveGroup(group, TARGET_CHANNELS, currentCurves.target_gt);
+    }
+  }
+
+  renderComparisonPlot();
+}
+
+// ---------------------------------------------------------------------------
+// Output comparison: pitch/envelope re-extracted from each system's own rendered audio.
+// ---------------------------------------------------------------------------
+
+function drawComparisonPanel(canvas, seriesMap, playheadT) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(rect.width, 200);
+  const height = Math.max(rect.height, 100);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const duration = (currentCurves && currentCurves.duration_s) || 1;
+  const padL = 6;
+  const padR = 6;
+  const padT = 8;
+  const padB = 8;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+  const xOf = (tt) => padL + (tt / duration) * plotW;
+
+  let minV = Infinity;
+  let maxV = -Infinity;
+  for (const arm of COMPARE_ORDER) {
+    const s = seriesMap[arm];
+    if (!s) continue;
+    for (const val of s.v) {
+      if (val == null) continue;
+      minV = Math.min(minV, val);
+      maxV = Math.max(maxV, val);
+    }
+  }
+  if (!isFinite(minV)) {
+    drawPlayhead(ctx, xOf, height, playheadT, duration, padT, height - padB);
+    return;
+  }
+  if (minV === maxV) {
+    minV -= 1;
+    maxV += 1;
+  }
+  const margin = (maxV - minV) * 0.1;
+  minV -= margin;
+  maxV += margin;
+  const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
+
+  for (const arm of COMPARE_ORDER) {
+    const s = seriesMap[arm];
+    if (!s) continue;
+    ctx.strokeStyle = ARM_COMPARE_COLORS[arm];
+    ctx.lineWidth = arm === "ground_truth" ? 1.3 : 1.6;
+    ctx.globalAlpha = arm === "ground_truth" ? 0.7 : 0.95;
+    _drawSeries(ctx, s.t, s.v, xOf, yOf);
+  }
+  ctx.globalAlpha = 1;
+
+  drawPlayhead(ctx, xOf, height, playheadT, duration, padT, height - padB);
+}
+
+function buildCompareLegend() {
+  const container = el("compareLegend");
+  container.innerHTML = "";
+  for (const arm of COMPARE_ORDER) {
+    const meta = MODELS.find((m) => m.id === arm);
+    const span = document.createElement("span");
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = ARM_COMPARE_COLORS[arm];
+    span.appendChild(swatch);
+    span.appendChild(document.createTextNode(meta.label));
+    container.appendChild(span);
+  }
+}
+
+function renderComparisonPlot() {
+  const comp = currentCurves.comparison;
+  const pitchCanvas = el("comparePitchCanvas");
+  const envCanvas = el("compareEnvelopeCanvas");
+
+  const pitchSeries = {};
+  const envSeries = {};
+  for (const arm of COMPARE_ORDER) {
+    pitchSeries[arm] = comp[arm].pitch;
+    envSeries[arm] = comp[arm].envelope;
+  }
+
+  const drawPitch = (t) => drawComparisonPanel(pitchCanvas, pitchSeries, t);
+  const drawEnv = (t) => drawComparisonPanel(envCanvas, envSeries, t);
+  registerPlayheadCanvas(pitchCanvas, pitchCanvas, drawPitch);
+  registerPlayheadCanvas(envCanvas, envCanvas, drawEnv);
+  drawPitch(null);
+  drawEnv(null);
 }
 
 // ---------------------------------------------------------------------------
@@ -516,7 +714,7 @@ function buildModelSelectorRow() {
   container.innerHTML = "";
   for (const m of MODELS) {
     const btn = document.createElement("button");
-    btn.className = "model-select-btn";
+    btn.className = "pill-btn";
     btn.dataset.model = m.id;
     btn.textContent = m.label;
     btn.addEventListener("click", () => loadModel(m.id));
@@ -524,16 +722,27 @@ function buildModelSelectorRow() {
   }
 }
 
+function buildStringSelectorRow(strings) {
+  const container = el("stringSelectorRow");
+  container.innerHTML = "";
+  for (const s of strings) {
+    const btn = document.createElement("button");
+    btn.className = "pill-btn";
+    btn.dataset.string = s;
+    btn.title = `String ${s} (${STRING_NAMES[s - 1]})`;
+    btn.textContent = String(s);
+    btn.addEventListener("click", () => loadCurves(s));
+    container.appendChild(btn);
+  }
+}
+
 async function main() {
   buildModelSelectorRow();
+  buildCompareLegend();
   await loadManifest();
 
   registerExclusive(el("queryAudio"));
   registerExclusive(el("modelAudio"));
-
-  el("stringSelect").addEventListener("change", (e) => {
-    loadCurves(parseInt(e.target.value, 10));
-  });
 
   onPlayhead((t) => {
     drawMidiRoll(t);
@@ -541,8 +750,9 @@ async function main() {
   });
 
   window.addEventListener("resize", () => {
-    drawMidiRoll(currentAudioEl && !currentAudioEl.paused ? currentAudioEl.currentTime : 0);
-    redrawAllCurves(currentAudioEl && !currentAudioEl.paused ? currentAudioEl.currentTime : 0);
+    const t = currentAudioEl && !currentAudioEl.paused ? currentAudioEl.currentTime : 0;
+    drawMidiRoll(t);
+    redrawAllCurves(t);
   });
 
   const firstSample = Object.keys(manifest.recordings)[0];
