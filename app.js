@@ -202,6 +202,7 @@ async function loadModel(modelId) {
   audio.src = `data/${currentSample}/audio/${modelId}.mp3`;
   audio.load();
 
+  applyDefaultCompareVisibility(modelId);
   renderModelDependentCurves();
 }
 
@@ -620,7 +621,7 @@ function renderModelDependentCurves() {
 // Output comparison: pitch/envelope re-extracted from each system's own rendered audio.
 // ---------------------------------------------------------------------------
 
-function drawComparisonPanel(canvas, seriesMap, playheadT) {
+function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(rect.width, 200);
@@ -639,6 +640,24 @@ function drawComparisonPanel(canvas, seriesMap, playheadT) {
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
   const xOf = (tt) => padL + (tt / duration) * plotW;
+
+  // faint gray background wherever the real recording actually has a note sounding
+  // (ground-truth voiced mask), drawn first so every line stays fully legible on top.
+  if (voicedMask) {
+    ctx.fillStyle = "rgba(255,255,255,0.09)";
+    let runStart = null;
+    const vt = voicedMask.t;
+    const vv = voicedMask.v;
+    for (let i = 0; i < vv.length; i++) {
+      const on = vv[i] != null && vv[i] > 0.5;
+      if (on && runStart == null) runStart = vt[i];
+      if ((!on || i === vv.length - 1) && runStart != null) {
+        ctx.fillRect(xOf(runStart), padT, Math.max(xOf(vt[i]) - xOf(runStart), 1), plotH);
+        runStart = null;
+      }
+    }
+  }
+
 
   let minV = Infinity;
   let maxV = -Infinity;
@@ -711,8 +730,38 @@ function redrawComparisonCanvases() {
   }
 }
 
+// Default comparison-plot visibility: ground truth plus whichever model tab is active,
+// so switching models re-centers the comparison on "reference vs. this system" without
+// the other two systems cluttering the initial view. Selecting ground-truth itself has
+// no distinct "other system" to pair it with, so that case opens all four instead.
+// Clicking a legend item still overrides this per the usual toggle behavior.
+function defaultCompareVisible(modelId) {
+  const vis = {};
+  if (modelId === "ground_truth") {
+    for (const arm of COMPARE_ORDER) vis[arm] = true;
+    return vis;
+  }
+  for (const arm of COMPARE_ORDER) vis[arm] = false;
+  vis.ground_truth = true;
+  vis[modelId] = true;
+  return vis;
+}
+
+function applyDefaultCompareVisibility(modelId) {
+  const defaults = defaultCompareVisible(modelId);
+  for (const arm of COMPARE_ORDER) compareVisible[arm] = defaults[arm];
+  updateLegendButtonStates();
+}
+
+function updateLegendButtonStates() {
+  for (const btn of document.querySelectorAll("#compareLegend .legend-item")) {
+    btn.classList.toggle("off", !compareVisible[btn.dataset.arm]);
+  }
+}
+
 function renderComparisonPlot() {
   const comp = currentCurves.comparison;
+  const voicedMask = currentCurves.voiced_gt;
   const pitchCanvas = el("comparePitchCanvas");
   const envCanvas = el("compareEnvelopeCanvas");
 
@@ -723,8 +772,8 @@ function renderComparisonPlot() {
     envSeries[arm] = comp[arm].envelope;
   }
 
-  const drawPitch = (t) => drawComparisonPanel(pitchCanvas, pitchSeries, t);
-  const drawEnv = (t) => drawComparisonPanel(envCanvas, envSeries, t);
+  const drawPitch = (t) => drawComparisonPanel(pitchCanvas, pitchSeries, t, voicedMask);
+  const drawEnv = (t) => drawComparisonPanel(envCanvas, envSeries, t, voicedMask);
   registerPlayheadCanvas(pitchCanvas, pitchCanvas, drawPitch);
   registerPlayheadCanvas(envCanvas, envCanvas, drawEnv);
   drawPitch(null);
