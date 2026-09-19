@@ -687,7 +687,45 @@ const VELOCITY_MODELS = [
   { id: "ground_truth", label: "ground-truth" },
 ];
 
-function drawVelocityPanel(canvas, stringsData, duration, playheadT, showPredicted) {
+function _stepValueAt(t, v, frameRate, time) {
+  if (!t.length) return null;
+  // Sample slightly after `time` rather than exactly at it: onset times come from MIDI,
+  // frame times from a fixed grid, so an onset can land within half a frame of a frame
+  // boundary -- without the nudge that can round down into the PREVIOUS note's held
+  // frame and draw the wrong stem height.
+  const idx = Math.min(t.length - 1, Math.max(0, Math.round((time - t[0]) * frameRate + 0.5)));
+  return v[idx];
+}
+
+function _drawStepWithStems(ctx, t, v, onsets, duration, xOf, yOf, bottomY) {
+  if (!t.length) return;
+  const frameRate = t.length > 1 ? (t.length - 1) / (t[t.length - 1] - t[0]) : 1;
+  const sorted = onsets && onsets.length ? [...onsets].sort((a, b) => a - b) : [t[0]];
+  for (let i = 0; i < sorted.length; i++) {
+    const start = Math.max(0, sorted[i]);
+    if (start > duration) break;
+    const end = i + 1 < sorted.length ? Math.min(sorted[i + 1], duration) : duration;
+    const value = _stepValueAt(t, v, frameRate, start);
+    if (value == null) continue;
+    const y = yOf(value);
+    const x0 = xOf(start);
+    const x1 = xOf(end);
+    // Vertical stem from the axis baseline up to this note's level, marking the onset.
+    ctx.beginPath();
+    ctx.moveTo(x0, bottomY);
+    ctx.lineTo(x0, y);
+    ctx.stroke();
+    // This note's held value, deliberately NOT connected to the previous note's segment:
+    // gain is a per-note step (see predict_gain_frames), not a continuously-varying
+    // signal, so a line drawn between two different note levels would misrepresent it.
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+    ctx.stroke();
+  }
+}
+
+function drawVelocityPanel(canvas, stringsData, notesData, duration, playheadT, showPredicted, visibleStrings) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(rect.width, 200);
@@ -706,10 +744,12 @@ function drawVelocityPanel(canvas, stringsData, duration, playheadT, showPredict
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
   const xOf = (tt) => padL + (tt / dur) * plotW;
+  const isVisible = (s) => !visibleStrings || visibleStrings[s] !== false;
 
   let minV = Infinity;
   let maxV = -Infinity;
   for (const s of Object.keys(stringsData)) {
+    if (!isVisible(s)) continue;
     const entry = stringsData[s];
     const series = showPredicted ? [entry.predicted, entry.gt] : [entry.gt];
     for (const ser of series) {
@@ -736,27 +776,29 @@ function drawVelocityPanel(canvas, stringsData, duration, playheadT, showPredict
   _drawYAxisTicks(ctx, minV, maxV, yOf, padL, padR, width);
 
   for (const s of Object.keys(stringsData)) {
+    if (!isVisible(s)) continue;
     const sIdx = parseInt(s, 10) - 1;
     const color = STRING_COLORS[sIdx];
     const entry = stringsData[s];
+    const onsets = (notesData && notesData[s] ? notesData[s] : []).map((n) => n.start_s);
     if (showPredicted) {
-      // faint dashed ground truth first, so the solid predicted line for the same
+      // Faint dashed ground truth first, so the solid predicted line for the same
       // string stays fully legible drawn on top of it.
       ctx.save();
       ctx.globalAlpha = 0.4;
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.2;
       ctx.setLineDash([3, 3]);
-      _drawSeries(ctx, entry.gt.t, entry.gt.v, xOf, yOf);
+      _drawStepWithStems(ctx, entry.gt.t, entry.gt.v, onsets, dur, xOf, yOf, height - padB);
       ctx.restore();
 
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.7;
-      _drawSeries(ctx, entry.predicted.t, entry.predicted.v, xOf, yOf);
+      _drawStepWithStems(ctx, entry.predicted.t, entry.predicted.v, onsets, dur, xOf, yOf, height - padB);
     } else {
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.7;
-      _drawSeries(ctx, entry.gt.t, entry.gt.v, xOf, yOf);
+      _drawStepWithStems(ctx, entry.gt.t, entry.gt.v, onsets, dur, xOf, yOf, height - padB);
     }
   }
 
@@ -1132,7 +1174,7 @@ function createVelocityStudy(rootId) {
   const legendEl = root.querySelector("#velocityLegend");
   const noteEl = root.querySelector("#velocityNote");
 
-  const state = { model: VELOCITY_MODELS[0].id, velocity: null };
+  const state = { model: VELOCITY_MODELS[0].id, velocity: null, stringVisible: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true } };
 
   function buildModelRow() {
     modelRow.innerHTML = "";
@@ -1154,6 +1196,30 @@ function createVelocityStudy(rootId) {
     modelAudio.load();
   }
 
+  function buildVelocityLegend() {
+    legendEl.innerHTML = "";
+    for (const s of [1, 2, 3, 4, 5, 6]) {
+      const key = String(s);
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "legend-item";
+      item.dataset.string = key;
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = STRING_COLORS[s - 1];
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode(`String ${s} (${STRING_NAMES[s - 1]})`));
+      item.title = "Click to show/hide this string's line";
+      item.classList.toggle("off", !state.stringVisible[key]);
+      item.addEventListener("click", () => {
+        state.stringVisible[key] = !state.stringVisible[key];
+        item.classList.toggle("off", !state.stringVisible[key]);
+        renderVelocityPlot();
+      });
+      legendEl.appendChild(item);
+    }
+  }
+
   function renderVelocityPlot() {
     if (!state.velocity) return;
     const showPredicted = state.model === "three_stage";
@@ -1163,7 +1229,8 @@ function createVelocityStudy(rootId) {
       : "Ground truth per-note gain -- this system has no distinct predicted-velocity " +
         "curve of its own.";
     const duration = state.velocity.duration_s;
-    const draw = (t) => drawVelocityPanel(canvas, state.velocity.strings, duration, t, showPredicted);
+    const draw = (t) =>
+      drawVelocityPanel(canvas, state.velocity.strings, picker.state.notes, duration, t, showPredicted, state.stringVisible);
     registerPlayheadCanvas(canvas, canvas, draw);
     draw(null);
   }
@@ -1196,7 +1263,7 @@ function createVelocityStudy(rootId) {
   });
 
   buildModelRow();
-  buildStringLegend(legendEl, [1, 2, 3, 4, 5, 6]);
+  buildVelocityLegend();
   registerExclusive(queryAudio);
   registerExclusive(modelAudio);
 
