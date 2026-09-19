@@ -15,33 +15,65 @@ const STYLE_NAMES = {
 const MODELS = [
   {
     id: "main_pipeline",
-    label: "Main pipeline (ours)",
+    label: "2 stage",
     description:
-      "Score \u2192 predicted per-string performance curves (pe_note_shape_fixed13) \u2192 " +
-      "PEOV-embed latent flow-matching synth \u2192 learned six-string mix reverb.",
+      "Ours. Score \u2192 predicted per-string performance curves (pe_note_shape_fixed13) " +
+      "\u2192 PEOV-embed latent flow-matching synth \u2192 learned six-string mix reverb.",
   },
   {
     id: "velocity_joint_peak",
-    label: "Velocity baseline",
+    label: "1 stage",
     description:
       "Flat MIDI pitch + peak pseudo-velocity, no predicted performance curves \u2192 " +
       "architecture-matched single-stage joint synth. Fair single-stage-vs-two-stage baseline.",
   },
   {
     id: "ddsp_guitar",
-    label: "DDSP-Guitar",
+    label: "ddsp-guitar",
     description:
       "Public erl-j/ddsp-guitar-unified checkpoint, score MIDI with their own pitch " +
       "correction and note-duration extension.",
   },
   {
     id: "ground_truth",
-    label: "Ground truth",
+    label: "ground-truth",
     description:
       "Original GuitarSet room-microphone recording, cut to the same window \u2014 the " +
       "listening reference, not a model output.",
   },
 ];
+
+// Which curve each system's target-curve panel actually shows. Only main_pipeline has a
+// real per-frame stage-2 prediction (pe_note_shape_fixed13's own output, "target_predicted"
+// in the exported JSON); ground_truth's panel is the real recording's own CREPE/RMS
+// curve ("target_gt"); the other two systems don't produce or expose a comparable
+// per-frame curve at all, so their panel says so instead of silently reusing ground
+// truth as if it were a prediction.
+const MODEL_CURVE_INFO = {
+  main_pipeline: {
+    source: "target_predicted",
+    title: "Predicted performance curves (pe_note_shape_fixed13's own stage-2 output)",
+  },
+  ground_truth: {
+    source: "target_gt",
+    title: "Ground-truth performance curves (CREPE pitch / log-RMS envelope)",
+  },
+  velocity_joint_peak: {
+    source: null,
+    title: "Predicted performance curves",
+    note:
+      "Not available \u2014 this baseline bypasses the stage-2 predictor entirely (flat " +
+      "MIDI pitch + peak pseudo-velocity feeds the synth directly, no per-frame curve " +
+      "is produced).",
+  },
+  ddsp_guitar: {
+    source: null,
+    title: "Predicted performance curves",
+    note:
+      "Not available \u2014 public erl-j/ddsp-guitar-unified checkpoint; its internal " +
+      "pitch-correction curve isn't exposed by this pipeline.",
+  },
+};
 
 // tab10 colors matplotlib names in scripts/pipeline/plot_ctrl_preview.py's COLORS map to,
 // so channel colors here match that script's PNGs exactly.
@@ -182,8 +214,8 @@ async function loadSample(id) {
 async function loadModel(modelId) {
   if (currentAudioEl === el("modelAudio")) currentAudioEl.pause();
   currentModel = modelId;
-  for (const tab of document.querySelectorAll(".model-tab")) {
-    tab.classList.toggle("active", tab.dataset.model === modelId);
+  for (const btn of document.querySelectorAll(".model-select-btn")) {
+    btn.classList.toggle("active", btn.dataset.model === modelId);
   }
   const meta = MODELS.find((m) => m.id === modelId);
   el("modelDescription").textContent = meta.description;
@@ -191,13 +223,36 @@ async function loadModel(modelId) {
   const audio = el("modelAudio");
   audio.src = `data/${currentSample}/audio/${modelId}.mp3`;
   audio.load();
+
+  renderTargetCurves();
+}
+
+function renderTargetCurves() {
+  const info = MODEL_CURVE_INFO[currentModel];
+  el("targetCurvesTitle").textContent = info.title;
+  const group = el("targetCurves");
+  const note = el("targetCurvesNote");
+
+  if (!info.source || !currentCurves) {
+    for (let i = curveCanvases.length - 1; i >= 0; i--) {
+      if (curveCanvases[i].container === group) curveCanvases.splice(i, 1);
+    }
+    group.innerHTML = "";
+    group.hidden = true;
+    note.hidden = false;
+    note.textContent = info.note || "Not available for this recording/string.";
+    return;
+  }
+  group.hidden = false;
+  note.hidden = true;
+  buildCurveGroup(group, TARGET_CHANNELS, currentCurves[info.source]);
 }
 
 async function loadCurves(stringNum) {
   currentString = stringNum;
   currentCurves = await fetchJSON(`data/${currentSample}/ctrl/string${stringNum}.json`);
   buildCurveGroup(el("inputCurves"), INPUT_CHANNELS, currentCurves.inputs);
-  buildCurveGroup(el("targetCurves"), TARGET_CHANNELS, currentCurves.intermediate);
+  renderTargetCurves();
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +273,19 @@ function buildStringLegend(strings) {
   }
 }
 
+// Fixed pitch range covering every note across all 5 demo recordings (MIDI 40-73),
+// snapped out to whole-octave C boundaries so the C-note gridlines/labels land cleanly
+// and the range never rescales per sample/string.
+const MIDI_PITCH_MIN = 36; // C2
+const MIDI_PITCH_MAX = 84; // C6
+
+function niceTimeStep(duration) {
+  // one tick per second up to 12s, else coarsen so labels don't collide
+  if (duration <= 12) return 1;
+  if (duration <= 30) return 2;
+  return 5;
+}
+
 function drawMidiRoll(playheadT) {
   const canvas = el("midiCanvas");
   const cssWidth = Math.max(canvas.clientWidth, 300);
@@ -233,40 +301,54 @@ function drawMidiRoll(playheadT) {
 
   if (!currentNotes) return;
   const duration = manifest.recordings[currentSample].duration_s;
+  const minPitch = MIDI_PITCH_MIN;
+  const maxPitch = MIDI_PITCH_MAX;
 
-  let minPitch = Infinity;
-  let maxPitch = -Infinity;
-  for (const s of Object.keys(currentNotes)) {
-    for (const n of currentNotes[s]) {
-      minPitch = Math.min(minPitch, n.pitch);
-      maxPitch = Math.max(maxPitch, n.pitch);
-    }
-  }
-  if (!isFinite(minPitch)) return;
-  minPitch -= 2;
-  maxPitch += 2;
-
-  const padL = 4;
-  const padR = 4;
-  const padT = 6;
-  const padB = 6;
+  const padL = 34;
+  const padR = 8;
+  const padT = 8;
+  const padB = 20;
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
   const xOf = (t) => padL + (t / duration) * plotW;
   const yOf = (p) => padT + (1 - (p - minPitch) / (maxPitch - minPitch)) * plotH;
 
-  // faint horizontal guide lines every 12 semitones (one octave)
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth = 1;
-  for (let p = Math.ceil(minPitch / 12) * 12; p <= maxPitch; p += 12) {
+  // horizontal guide line + "Cn" label at every octave (C2, C3, ... C6)
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let p = minPitch; p <= maxPitch; p += 12) {
     const y = Math.round(yOf(p)) + 0.5;
+    ctx.strokeStyle = p === minPitch || p === maxPitch
+      ? "rgba(255,255,255,0.18)"
+      : "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padL, y);
     ctx.lineTo(width - padR, y);
     ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillText(`C${p / 12 - 1}`, padL - 6, y);
   }
 
-  const noteH = Math.max(4, plotH / (maxPitch - minPitch) * 3);
+  // vertical guide line + time label every niceTimeStep(duration) seconds
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const step = niceTimeStep(duration);
+  for (let t = 0; t <= duration + 1e-6; t += step) {
+    const x = Math.round(xOf(t)) + 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.beginPath();
+    ctx.moveTo(x, padT);
+    ctx.lineTo(x, height - padB);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillText(`${Math.round(t)}s`, x, height - padB + 4);
+  }
+
+  // fixed, sane note thickness (independent of pitch-range span, which was the source of
+  // the "incredibly thick" notes -- it used to scale with plotH / (maxPitch-minPitch))
+  const noteH = 7;
   for (const sKey of Object.keys(currentNotes)) {
     const sIdx = parseInt(sKey, 10) - 1;
     ctx.fillStyle = STRING_COLORS[sIdx];
@@ -283,7 +365,7 @@ function drawMidiRoll(playheadT) {
   }
   ctx.globalAlpha = 1;
 
-  drawPlayhead(ctx, xOf, height, playheadT, duration);
+  drawPlayhead(ctx, xOf, height, playheadT, duration, padT, height - padB);
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -296,15 +378,17 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawPlayhead(ctx, xOf, height, t, duration) {
+function drawPlayhead(ctx, xOf, height, t, duration, yTop, yBottom) {
   if (t == null) return;
   const clamped = Math.max(0, Math.min(duration, t));
   const x = Math.round(xOf(clamped)) + 0.5;
+  const y0 = yTop == null ? 0 : yTop;
+  const y1 = yBottom == null ? height : yBottom;
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, height);
+  ctx.moveTo(x, y0);
+  ctx.lineTo(x, y1);
   ctx.stroke();
 }
 
@@ -427,12 +511,12 @@ function redrawAllCurves(playheadT) {
 // Wiring
 // ---------------------------------------------------------------------------
 
-function buildModelTabs() {
-  const container = el("modelTabs");
+function buildModelSelectorRow() {
+  const container = el("modelSelectorRow");
   container.innerHTML = "";
   for (const m of MODELS) {
     const btn = document.createElement("button");
-    btn.className = "model-tab";
+    btn.className = "model-select-btn";
     btn.dataset.model = m.id;
     btn.textContent = m.label;
     btn.addEventListener("click", () => loadModel(m.id));
@@ -441,7 +525,7 @@ function buildModelTabs() {
 }
 
 async function main() {
-  buildModelTabs();
+  buildModelSelectorRow();
   await loadManifest();
 
   registerExclusive(el("queryAudio"));

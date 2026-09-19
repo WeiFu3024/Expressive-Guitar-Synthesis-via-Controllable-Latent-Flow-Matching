@@ -75,29 +75,10 @@ select {
   font-size: 0.9rem;
 }
 
-/* Listening area is pinned at the top of the viewport so it stays visible no matter
-   which model panel is scrolled to below it. */
-.listening-area {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  box-shadow: 0 8px 20px -12px rgba(0, 0, 0, 0.6);
-}
-
-.query-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.query-label { display: flex; flex-direction: column; gap: 2px; }
-
-.hint-text { color: var(--muted); font-size: 0.82rem; max-width: 520px; }
-
-audio { height: 34px; }
+/* Everything the user compares (Query, model selector/audio, predictor-input and
+   target-curve panels) lives in one static block (.listening-area), in reading order --
+   no sticky/fixed/absolute positioning, so nothing shifts or gets covered while
+   scrolling. */
 
 .midi-viz canvas {
   width: 100%;
@@ -125,23 +106,44 @@ audio { height: 34px; }
   vertical-align: middle;
 }
 
-.model-tabs {
+.audio-block {
+  margin-top: 16px;
+}
+
+.audio-block-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.hint-text { color: var(--muted); font-size: 0.82rem; }
+
+audio {
+  display: block;
+  width: 100%;
+  height: 36px;
+}
+
+.model-selector-row {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.model-tab {
+.model-select-btn {
   background: #1e222c;
   color: var(--text);
   border: 1px solid var(--panel-border);
   border-radius: 20px;
-  padding: 8px 16px;
-  font-size: 0.92rem;
+  padding: 6px 14px;
+  font-size: 0.86rem;
   cursor: pointer;
 }
 
-.model-tab.active {
+.model-select-btn.active {
   background: var(--accent-dim);
   border-color: var(--accent);
   color: #fff;
@@ -149,15 +151,8 @@ audio { height: 34px; }
 
 .model-description {
   color: var(--muted);
-  font-size: 0.87rem;
-  margin: 10px 0 0;
-}
-
-.model-audio-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 8px;
+  font-size: 0.82rem;
+  margin: 8px 0 0;
 }
 
 .curve-section-header {
@@ -174,6 +169,15 @@ audio { height: 34px; }
   font-weight: 600;
   color: var(--text);
   margin: 0;
+}
+
+.curve-unavailable {
+  border: 1px dashed var(--panel-border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  background: #0c0e13;
 }
 
 .string-select-label {
