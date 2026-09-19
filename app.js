@@ -13,34 +13,10 @@ const STYLE_NAMES = {
 };
 
 const MODELS = [
-  {
-    id: "main_pipeline",
-    label: "2 stage",
-    description:
-      "Ours. Score \u2192 predicted per-string performance curves (pe_note_shape_fixed13) " +
-      "\u2192 PEOV-embed latent flow-matching synth \u2192 learned six-string mix reverb.",
-  },
-  {
-    id: "velocity_joint_peak",
-    label: "1 stage",
-    description:
-      "Flat MIDI pitch + peak pseudo-velocity, no predicted performance curves \u2192 " +
-      "architecture-matched single-stage joint synth. Fair single-stage-vs-two-stage baseline.",
-  },
-  {
-    id: "ddsp_guitar",
-    label: "ddsp-guitar",
-    description:
-      "Public erl-j/ddsp-guitar-unified checkpoint, score MIDI with their own pitch " +
-      "correction and note-duration extension.",
-  },
-  {
-    id: "ground_truth",
-    label: "ground-truth",
-    description:
-      "Original GuitarSet room-microphone recording, cut to the same window \u2014 the " +
-      "listening reference, not a model output.",
-  },
+  { id: "main_pipeline", label: "2 stage" },
+  { id: "velocity_joint_peak", label: "1 stage" },
+  { id: "ddsp_guitar", label: "ddsp-guitar" },
+  { id: "ground_truth", label: "ground-truth" },
 ];
 
 // tab10 colors matplotlib names in scripts/pipeline/plot_ctrl_preview.py's COLORS map to,
@@ -195,8 +171,6 @@ async function loadModel(modelId) {
   for (const btn of document.querySelectorAll("#modelSelectorRow .pill-btn")) {
     btn.classList.toggle("active", btn.dataset.model === modelId);
   }
-  const meta = MODELS.find((m) => m.id === modelId);
-  el("modelDescription").textContent = meta.description;
 
   const audio = el("modelAudio");
   audio.src = `data/${currentSample}/audio/${modelId}.mp3`;
@@ -597,18 +571,16 @@ function renderModelDependentCurves() {
   } else {
     synthSection.hidden = false;
     if (currentModel === "main_pipeline") {
-      title.textContent = "Synthesizer input \u2014 predicted curve, actually fed to the synth";
+      title.textContent = "Synthesizer input";
       note.hidden = false;
-      note.textContent = "Faint dashed line: ground-truth pitch/envelope, shown for " +
-        "reference only \u2014 not fed to the synth.";
+      note.textContent = "Faint dashed line: ground-truth, not fed to the synth";
       buildSynthInputCurves(group, "main_pipeline");
     } else if (currentModel === "velocity_joint_peak") {
-      title.textContent =
-        "Synthesizer input \u2014 flat nominal pitch + constant peak velocity, actually fed to the synth";
+      title.textContent = "Synthesizer input";
       note.hidden = true;
       buildSynthInputCurves(group, "velocity_joint_peak");
     } else if (currentModel === "ground_truth") {
-      title.textContent = "Ground-truth performance curve (CREPE pitch / log-RMS envelope)";
+      title.textContent = "Ground truth curve";
       note.hidden = true;
       buildCurveGroup(group, TARGET_CHANNELS, currentCurves.target_gt);
     }

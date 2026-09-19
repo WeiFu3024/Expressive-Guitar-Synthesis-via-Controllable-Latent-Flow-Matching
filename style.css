@@ -36,12 +36,6 @@ main {
   margin: 0 0 14px;
 }
 
-.abstract {
-  color: var(--muted);
-  font-size: 0.97rem;
-  max-width: 860px;
-}
-
 .panel {
   background: var(--panel);
   border: 1px solid var(--panel-border);
@@ -209,7 +203,7 @@ audio {
 .plot-details > summary {
   list-style: none;
   cursor: pointer;
-  font-size: 0.92rem;
+  font-size: 1.15rem;
   font-weight: 600;
   color: var(--text);
   display: flex;
@@ -301,14 +295,3 @@ audio {
   .comparison-grid { grid-template-columns: 1fr; }
 }
 
-.page-footer {
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 10px 20px 50px;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.page-footer code {
-  color: var(--accent);
-}
