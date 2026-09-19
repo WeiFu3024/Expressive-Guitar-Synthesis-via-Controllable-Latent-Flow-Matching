@@ -751,7 +751,7 @@ function drawVelocityPanel(canvas, stringsData, notesData, duration, playheadT, 
   for (const s of Object.keys(stringsData)) {
     if (!isVisible(s)) continue;
     const entry = stringsData[s];
-    const series = showPredicted ? [entry.predicted, entry.gt] : [entry.gt];
+    const series = showPredicted ? [entry.predicted, entry.gt, entry.extracted] : [entry.gt];
     for (const ser of series) {
       for (const val of ser.v) {
         if (val == null) continue;
@@ -782,14 +782,24 @@ function drawVelocityPanel(canvas, stringsData, notesData, duration, playheadT, 
     const entry = stringsData[s];
     const onsets = (notesData && notesData[s] ? notesData[s] : []).map((n) => n.start_s);
     if (showPredicted) {
-      // Faint dashed ground truth first, so the solid predicted line for the same
-      // string stays fully legible drawn on top of it.
+      // Layered back-to-front so the solid predicted line for this string stays fully
+      // legible on top: faintest first (ground truth, for reference), then the
+      // re-extracted-from-audio curve (did the synth actually reach that loudness?),
+      // then the predicted curve itself, solid.
       ctx.save();
       ctx.globalAlpha = 0.4;
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.2;
       ctx.setLineDash([3, 3]);
       _drawStepWithStems(ctx, entry.gt.t, entry.gt.v, onsets, dur, xOf, yOf, height - padB);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = 0.7;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([1, 2]);
+      _drawStepWithStems(ctx, entry.extracted.t, entry.extracted.v, onsets, dur, xOf, yOf, height - padB);
       ctx.restore();
 
       ctx.strokeStyle = color;
@@ -1257,12 +1267,8 @@ function createVelocityStudy(rootId) {
       swatch.style.background = STRING_COLORS[s - 1];
       item.appendChild(swatch);
       item.appendChild(document.createTextNode(`String ${s} (${STRING_NAMES[s - 1]})`));
-      item.title = "Click to show/hide this string's line";
-      item.addEventListener("click", () => {
-        state.stringVisible[key] = !state.stringVisible[key];
-        item.classList.toggle("off", !state.stringVisible[key]);
-        renderVelocityPlot();
-      });
+      item.title = "Click to view this string alone";
+      item.addEventListener("click", () => selectString(s));
       legendEl.appendChild(item);
     }
     updateVelocityLegendState();
@@ -1272,8 +1278,9 @@ function createVelocityStudy(rootId) {
     if (!state.velocity) return;
     const showPredicted = state.model === "three_stage";
     noteEl.textContent = showPredicted
-      ? "Solid: predicted, from the score-only note-gain predictor. Faint dashed: " +
-        "ground truth, for reference."
+      ? "Solid: predicted, from the score-only note-gain predictor. Dotted: re-extracted " +
+        "from the synth's own rendered audio (did it actually reach that loudness?). " +
+        "Faint dashed: ground truth, for reference."
       : "Ground truth per-note gain -- this system has no distinct predicted-velocity " +
         "curve of its own.";
     const duration = state.velocity.duration_s;
