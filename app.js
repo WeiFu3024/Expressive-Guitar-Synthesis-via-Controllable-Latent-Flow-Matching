@@ -221,7 +221,7 @@ async function loadModel(modelId) {
   if (currentAudioEl === el("modelAudio")) currentAudioEl.pause();
   if (currentAudioEl === el("stringAudio")) currentAudioEl.pause();
   currentModel = modelId;
-  for (const btn of document.querySelectorAll("#modelSelectorRow .pill-btn")) {
+  for (const btn of document.querySelectorAll(".model-select-group .pill-btn")) {
     btn.classList.toggle("active", btn.dataset.model === modelId);
   }
 
@@ -859,15 +859,16 @@ function renderComparisonPlot() {
 // ---------------------------------------------------------------------------
 
 function buildModelSelectorRow() {
-  const container = el("modelSelectorRow");
-  container.innerHTML = "";
-  for (const m of MODELS) {
-    const btn = document.createElement("button");
-    btn.className = "pill-btn";
-    btn.dataset.model = m.id;
-    btn.textContent = m.label;
-    btn.addEventListener("click", () => loadModel(m.id));
-    container.appendChild(btn);
+  for (const container of document.querySelectorAll(".model-select-group")) {
+    container.innerHTML = "";
+    for (const m of MODELS) {
+      const btn = document.createElement("button");
+      btn.className = "pill-btn";
+      btn.dataset.model = m.id;
+      btn.textContent = m.label;
+      btn.addEventListener("click", () => loadModel(m.id));
+      container.appendChild(btn);
+    }
   }
 }
 
@@ -903,6 +904,20 @@ async function main() {
       if (details.open) renderModelDependentCurves();
     });
   }
+
+  // Entering "Single String Study" folds "Full Mix Study" out of the way so the reader
+  // can focus on the string-level comparison -- not locked, they can still reopen it.
+  // Also redraws: a nested predictor/synth/comparison section left open from a previous
+  // visit rendered its canvases at fallback size while THIS outer section was collapsed
+  // (collapsed <details> content has zero layout size regardless of a descendant's own
+  // open state), so its own "opened" redraw never fired for the current dimensions.
+  el("singleStringSection").addEventListener("toggle", () => {
+    if (!el("singleStringSection").open) return;
+    preserveScrollPosition(() => {
+      if (el("fullMixSection").open) el("fullMixSection").open = false;
+      renderModelDependentCurves();
+    });
+  });
 
   onPlayhead((t) => {
     lastPlayheadT = t;
