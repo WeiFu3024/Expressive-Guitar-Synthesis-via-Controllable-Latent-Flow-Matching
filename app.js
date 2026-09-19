@@ -219,6 +219,7 @@ async function loadSample(id) {
 
 async function loadModel(modelId) {
   if (currentAudioEl === el("modelAudio")) currentAudioEl.pause();
+  if (currentAudioEl === el("stringAudio")) currentAudioEl.pause();
   currentModel = modelId;
   for (const btn of document.querySelectorAll("#modelSelectorRow .pill-btn")) {
     btn.classList.toggle("active", btn.dataset.model === modelId);
@@ -227,16 +228,25 @@ async function loadModel(modelId) {
   const audio = el("modelAudio");
   audio.src = `data/${currentSample}/audio/${modelId}.mp3`;
   audio.load();
+  updateStringAudio();
 
   applyDefaultCompareVisibility(modelId);
   renderModelDependentCurves();
 }
 
+function updateStringAudio() {
+  const audio = el("stringAudio");
+  audio.src = `data/${currentSample}/audio/strings/${currentModel}/string${currentString}.mp3`;
+  audio.load();
+}
+
 async function loadCurves(stringNum) {
+  if (currentAudioEl === el("stringAudio")) currentAudioEl.pause();
   currentString = stringNum;
   for (const btn of document.querySelectorAll("#stringSelectorRow .pill-btn")) {
     btn.classList.toggle("active", parseInt(btn.dataset.string, 10) === stringNum);
   }
+  updateStringAudio();
   currentCurves = await fetchJSON(`data/${currentSample}/ctrl/string${stringNum}.json`);
   renderModelDependentCurves();
 }
@@ -844,6 +854,7 @@ async function main() {
 
   registerExclusive(el("queryAudio"));
   registerExclusive(el("modelAudio"));
+  registerExclusive(el("stringAudio"));
 
   // Collapsed <details> render their children at zero size, so canvases built while
   // folded need a fresh redraw once actually visible -- otherwise they stay stuck at
