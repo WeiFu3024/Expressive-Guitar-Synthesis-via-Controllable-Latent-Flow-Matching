@@ -208,9 +208,7 @@ async function loadSample(id) {
     buildStringLegend(rec.available_strings);
     buildStringSelectorRow(rec.available_strings);
 
-    currentString = rec.available_strings.includes(currentString)
-      ? currentString
-      : rec.available_strings[0];
+    currentString = mostActiveString(rec.available_strings, currentNotes);
 
     await loadModel(currentModel);
     await loadCurves(currentString);
@@ -249,6 +247,23 @@ async function loadCurves(stringNum) {
   updateStringAudio();
   currentCurves = await fetchJSON(`data/${currentSample}/ctrl/string${stringNum}.json`);
   renderModelDependentCurves();
+}
+
+// "Single String Study" defaults to whichever string actually carries the performance
+// for this clip (most notes played), rather than always string 1 -- most GuitarSet
+// takes concentrate the melody/comping on one or two strings, and the rest are mostly
+// silent open/drone notes not worth landing on by default.
+function mostActiveString(availableStrings, notes) {
+  let best = availableStrings[0];
+  let bestCount = -1;
+  for (const s of availableStrings) {
+    const count = (notes[String(s)] || []).length;
+    if (count > bestCount) {
+      best = s;
+      bestCount = count;
+    }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------
