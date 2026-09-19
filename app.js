@@ -677,6 +677,93 @@ function defaultCompareVisible(modelId) {
 }
 
 // ---------------------------------------------------------------------------
+// "3. Velocity Prediction": all 6 strings' predicted-vs-ground-truth note gain on one
+// canvas, real per-frame time axis (not note index).
+// ---------------------------------------------------------------------------
+
+const VELOCITY_MODELS = [
+  { id: "three_stage", label: "3 stage" },
+  { id: "main_pipeline", label: "2 stage" },
+  { id: "ground_truth", label: "ground-truth" },
+];
+
+function drawVelocityPanel(canvas, stringsData, duration, playheadT, showPredicted) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(rect.width, 200);
+  const height = Math.max(rect.height, 160);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const dur = duration || 1;
+  const padL = Y_AXIS_PAD_L;
+  const padR = 6;
+  const padT = 8;
+  const padB = 8;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+  const xOf = (tt) => padL + (tt / dur) * plotW;
+
+  let minV = Infinity;
+  let maxV = -Infinity;
+  for (const s of Object.keys(stringsData)) {
+    const entry = stringsData[s];
+    const series = showPredicted ? [entry.predicted, entry.gt] : [entry.gt];
+    for (const ser of series) {
+      for (const val of ser.v) {
+        if (val == null) continue;
+        minV = Math.min(minV, val);
+        maxV = Math.max(maxV, val);
+      }
+    }
+  }
+  if (!isFinite(minV)) {
+    drawPlayhead(ctx, xOf, height, playheadT, dur, padT, height - padB);
+    return;
+  }
+  if (minV === maxV) {
+    minV -= 1;
+    maxV += 1;
+  }
+  const margin = (maxV - minV) * 0.1;
+  minV -= margin;
+  maxV += margin;
+  const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
+
+  _drawYAxisTicks(ctx, minV, maxV, yOf, padL, padR, width);
+
+  for (const s of Object.keys(stringsData)) {
+    const sIdx = parseInt(s, 10) - 1;
+    const color = STRING_COLORS[sIdx];
+    const entry = stringsData[s];
+    if (showPredicted) {
+      // faint dashed ground truth first, so the solid predicted line for the same
+      // string stays fully legible drawn on top of it.
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      _drawSeries(ctx, entry.gt.t, entry.gt.v, xOf, yOf);
+      ctx.restore();
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.7;
+      _drawSeries(ctx, entry.predicted.t, entry.predicted.v, xOf, yOf);
+    } else {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.7;
+      _drawSeries(ctx, entry.gt.t, entry.gt.v, xOf, yOf);
+    }
+  }
+
+  drawPlayhead(ctx, xOf, height, playheadT, dur, padT, height - padB);
+}
+
+// ---------------------------------------------------------------------------
 // Model selector: one shared currentModel, built into every ".model-select-group" row
 // found anywhere on the page (Full Mix Study's and Single String Study's each get their
 // own row/DOM, but a click on either updates the same state and both rows' active pill).
@@ -773,6 +860,21 @@ function createSamplePicker(root) {
 }
 
 // ---------------------------------------------------------------------------
+// Entering any top-level section folds the other currently-open ones, so the reader's
+// attention stays on whichever one they just opened -- not locked, they can still
+// reopen any of them (multiple can be open simultaneously if the reader does that).
+// ---------------------------------------------------------------------------
+
+const SECTION_IDS = ["fullMixSection", "singleStringSection", "velocityPredictionSection"];
+function foldOtherSections(exceptId) {
+  for (const id of SECTION_IDS) {
+    if (id === exceptId) continue;
+    const details = el(id);
+    if (details && details.open) details.open = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // "1. Full Mix Study": Query hint + per-model mix audio, own sample/MIDI.
 // ---------------------------------------------------------------------------
 
@@ -799,7 +901,11 @@ function createMixStudy(rootId) {
   onModelChange(() => refreshModelAudio());
 
   root.addEventListener("toggle", () => {
-    if (root.open) picker.redrawMidi(lastPlayheadT);
+    if (!root.open) return;
+    preserveScrollPosition(() => {
+      foldOtherSections("fullMixSection");
+      picker.redrawMidi(lastPlayheadT);
+    });
   });
 
   registerExclusive(queryAudio);
@@ -989,17 +1095,16 @@ function createSingleStringStudy(rootId) {
     });
   }
 
-  // Entering "Single String Study" folds "Full Mix Study" out of the way so the reader
-  // can focus on the string-level comparison -- not locked, they can still reopen it.
-  // Also redraws: this section's own MIDI roll and any nested predictor/synth/comparison
-  // section left open from a previous visit rendered at fallback size while THIS outer
-  // section was collapsed (collapsed <details> content has zero layout size regardless
-  // of a descendant's own open state).
+  // Entering "Single String Study" folds the other sections out of the way so the
+  // reader can focus on the string-level comparison -- not locked, they can still
+  // reopen them. Also redraws: this section's own MIDI roll and any nested
+  // predictor/synth/comparison section left open from a previous visit rendered at
+  // fallback size while THIS outer section was collapsed (collapsed <details> content
+  // has zero layout size regardless of a descendant's own open state).
   root.addEventListener("toggle", () => {
     if (!root.open) return;
     preserveScrollPosition(() => {
-      const fullMix = el("fullMixSection");
-      if (fullMix && fullMix.open) fullMix.open = false;
+      foldOtherSections("singleStringSection");
       picker.redrawMidi(lastPlayheadT);
       renderModelDependentCurves();
     });
@@ -1007,6 +1112,93 @@ function createSingleStringStudy(rootId) {
 
   buildCompareLegend();
   registerExclusive(stringAudio);
+
+  return { picker, loadSample: (id) => picker.selectSample(id) };
+}
+
+// ---------------------------------------------------------------------------
+// "3. Velocity Prediction": own sample/MIDI, own 3-option model selector (NOT the shared
+// currentModel -- ddsp-guitar/1-stage have no place here, and 3-stage doesn't exist in
+// the other two sections), and one 6-string predicted-vs-ground-truth velocity plot.
+// ---------------------------------------------------------------------------
+
+function createVelocityStudy(rootId) {
+  const root = el(rootId);
+  const picker = createSamplePicker(root);
+  const queryAudio = root.querySelector(".query-audio");
+  const modelAudio = root.querySelector("#velocityModelAudio");
+  const modelRow = root.querySelector("#velocityModelSelectorRow");
+  const canvas = root.querySelector("#velocityCanvas");
+  const legendEl = root.querySelector("#velocityLegend");
+  const noteEl = root.querySelector("#velocityNote");
+
+  const state = { model: VELOCITY_MODELS[0].id, velocity: null };
+
+  function buildModelRow() {
+    modelRow.innerHTML = "";
+    for (const m of VELOCITY_MODELS) {
+      const btn = document.createElement("button");
+      btn.className = "pill-btn";
+      btn.dataset.model = m.id;
+      btn.textContent = m.label;
+      btn.classList.toggle("active", m.id === state.model);
+      btn.addEventListener("click", () => setLocalModel(m.id));
+      modelRow.appendChild(btn);
+    }
+  }
+
+  function refreshModelAudio() {
+    if (!picker.state.sample) return;
+    if (currentAudioEl === modelAudio) currentAudioEl.pause();
+    modelAudio.src = `data/${picker.state.sample}/audio/${state.model}.mp3`;
+    modelAudio.load();
+  }
+
+  function renderVelocityPlot() {
+    if (!state.velocity) return;
+    const showPredicted = state.model === "three_stage";
+    noteEl.textContent = showPredicted
+      ? "Solid: predicted, from the score-only note-gain predictor. Faint dashed: " +
+        "ground truth, for reference."
+      : "Ground truth per-note gain -- this system has no distinct predicted-velocity " +
+        "curve of its own.";
+    const duration = state.velocity.duration_s;
+    const draw = (t) => drawVelocityPanel(canvas, state.velocity.strings, duration, t, showPredicted);
+    registerPlayheadCanvas(canvas, canvas, draw);
+    draw(null);
+  }
+
+  function setLocalModel(modelId) {
+    state.model = modelId;
+    for (const btn of modelRow.querySelectorAll(".pill-btn")) {
+      btn.classList.toggle("active", btn.dataset.model === modelId);
+    }
+    refreshModelAudio();
+    renderVelocityPlot();
+  }
+
+  picker.onSelect(async () => {
+    if (currentAudioEl === queryAudio) currentAudioEl.pause();
+    queryAudio.src = `data/${picker.state.sample}/audio/query.mp3`;
+    queryAudio.load();
+    refreshModelAudio();
+    state.velocity = await fetchJSON(`data/${picker.state.sample}/velocity.json`);
+    renderVelocityPlot();
+  });
+
+  root.addEventListener("toggle", () => {
+    if (!root.open) return;
+    preserveScrollPosition(() => {
+      foldOtherSections("velocityPredictionSection");
+      picker.redrawMidi(lastPlayheadT);
+      renderVelocityPlot();
+    });
+  });
+
+  buildModelRow();
+  buildStringLegend(legendEl, [1, 2, 3, 4, 5, 6]);
+  registerExclusive(queryAudio);
+  registerExclusive(modelAudio);
 
   return { picker, loadSample: (id) => picker.selectSample(id) };
 }
@@ -1020,11 +1212,13 @@ async function main() {
 
   const mixStudy = createMixStudy("fullMixSection");
   const singleStringStudy = createSingleStringStudy("singleStringSection");
+  const velocityStudy = createVelocityStudy("velocityPredictionSection");
 
   buildModelSelectorRows();
 
   mixStudy.picker.populateOptions();
   singleStringStudy.picker.populateOptions();
+  velocityStudy.picker.populateOptions();
 
   window.addEventListener("resize", () => {
     const t = currentAudioEl && !currentAudioEl.paused ? currentAudioEl.currentTime : lastPlayheadT;
@@ -1034,6 +1228,7 @@ async function main() {
   const firstSample = Object.keys(manifest.recordings)[0];
   await mixStudy.loadSample(firstSample);
   await singleStringStudy.loadSample(firstSample);
+  await velocityStudy.loadSample(firstSample);
 }
 
 main();

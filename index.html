@@ -112,6 +112,53 @@
         <div id="synthInputCurves" class="curve-group"></div>
       </details>
     </details>
+
+    <details class="plot-details section-details" id="velocityPredictionSection">
+      <summary>3. Velocity Prediction</summary>
+      <p class="model-description">A note-gain predictor estimates per-note loudness
+        from the score alone (no real recording needed); this feeds the same
+        pitch/envelope predictor and synth as the 2-stage system above, making a full
+        3-stage pipeline. Select a sample, compare its mix audio against the 2-stage
+        (ground-truth velocity) and ground-truth arms, and read the predicted vs.
+        ground-truth velocity curve for every string.</p>
+
+      <div class="midi-viz">
+        <canvas class="midi-canvas" height="300"></canvas>
+      </div>
+      <div class="midi-legend"></div>
+
+      <div class="sample-picker-row">
+        <label>Sample</label>
+        <select class="sample-select"></select>
+        <span class="sample-meta"></span>
+      </div>
+
+      <div class="audio-block">
+        <div class="audio-block-label">
+          <strong>Query</strong>
+          <span class="hint-text">FluidSynth render of the score MIDI &mdash; a content
+            hint, not a rated system.</span>
+        </div>
+        <audio class="query-audio" controls preload="none"></audio>
+      </div>
+
+      <div class="audio-block">
+        <div class="audio-block-label">
+          <strong>Model output</strong>
+          <div class="pill-row" id="velocityModelSelectorRow"></div>
+        </div>
+        <audio id="velocityModelAudio" controls preload="none"></audio>
+      </div>
+
+      <div class="curve-section-header">
+        <h3>Velocity comparison (all 6 strings)</h3>
+      </div>
+      <p id="velocityNote" class="model-description"></p>
+      <div class="comparison-col">
+        <canvas id="velocityCanvas" style="height: 220px;"></canvas>
+      </div>
+      <div id="velocityLegend" class="string-legend"></div>
+    </details>
   </section>
 </main>
 <script src="app.js"></script>
