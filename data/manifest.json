@@ -1,0 +1,109 @@
+{
+  "recordings": {
+    "03_Rock1-130-A_comp": {
+      "tier": "practice",
+      "style": "Rock",
+      "player": "03",
+      "take": "comp",
+      "duration_s": 7.988,
+      "available_strings": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "arms": [
+        "ground_truth",
+        "main_pipeline",
+        "velocity_joint_peak",
+        "ddsp_guitar"
+      ]
+    },
+    "04_Jazz3-150-C_comp": {
+      "tier": "scored",
+      "style": "Jazz",
+      "player": "04",
+      "take": "comp",
+      "duration_s": 8.0,
+      "available_strings": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "arms": [
+        "ground_truth",
+        "main_pipeline",
+        "velocity_joint_peak",
+        "ddsp_guitar"
+      ]
+    },
+    "00_SS2-88-F_solo": {
+      "tier": "scored",
+      "style": "SS",
+      "player": "00",
+      "take": "solo",
+      "duration_s": 8.0,
+      "available_strings": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "arms": [
+        "ground_truth",
+        "main_pipeline",
+        "velocity_joint_peak",
+        "ddsp_guitar"
+      ]
+    },
+    "01_BN1-147-Gb_comp": {
+      "tier": "scored",
+      "style": "BN",
+      "player": "01",
+      "take": "comp",
+      "duration_s": 8.0,
+      "available_strings": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "arms": [
+        "ground_truth",
+        "main_pipeline",
+        "velocity_joint_peak",
+        "ddsp_guitar"
+      ]
+    },
+    "05_Funk2-108-Eb_comp": {
+      "tier": "scored",
+      "style": "Funk",
+      "player": "05",
+      "take": "comp",
+      "duration_s": 8.0,
+      "available_strings": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "arms": [
+        "ground_truth",
+        "main_pipeline",
+        "velocity_joint_peak",
+        "ddsp_guitar"
+      ]
+    }
+  }
+}
