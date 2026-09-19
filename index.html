@@ -13,17 +13,17 @@
 </header>
 
 <main>
-  <section class="panel sample-picker">
-    <label for="sampleSelect">Sample</label>
-    <select id="sampleSelect"></select>
-    <span id="sampleMeta" class="sample-meta"></span>
-  </section>
-
   <section class="panel listening-area" id="listeningArea">
     <div class="midi-viz">
       <canvas id="midiCanvas" height="300"></canvas>
     </div>
     <div id="stringLegend" class="string-legend"></div>
+
+    <div class="sample-picker-row">
+      <label for="sampleSelect">Sample</label>
+      <select id="sampleSelect"></select>
+      <span id="sampleMeta" class="sample-meta"></span>
+    </div>
 
     <details class="plot-details section-details" id="fullMixSection" open>
       <summary>1. Full Mix Study</summary>

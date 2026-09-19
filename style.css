@@ -45,14 +45,15 @@ main {
   margin-bottom: 20px;
 }
 
-.sample-picker {
+.sample-picker-row {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  margin-top: 16px;
 }
 
-.sample-picker label {
+.sample-picker-row label {
   font-weight: 600;
 }
 
