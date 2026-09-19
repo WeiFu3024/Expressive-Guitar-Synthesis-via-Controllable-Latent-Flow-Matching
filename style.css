@@ -202,6 +202,42 @@ audio {
   margin: 0;
 }
 
+.plot-details {
+  margin-top: 18px;
+}
+
+.plot-details > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  user-select: none;
+}
+
+.plot-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.plot-details > summary::before {
+  content: "\25B8";
+  display: inline-block;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.plot-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.plot-details > summary:hover {
+  color: var(--accent);
+}
+
 .curve-group {
   border: 1px solid var(--panel-border);
   border-radius: 8px;

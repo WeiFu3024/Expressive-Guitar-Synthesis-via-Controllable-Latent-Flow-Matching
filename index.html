@@ -61,40 +61,36 @@
         <div class="pill-row" id="stringSelectorRow"></div>
       </div>
 
-      <div id="predictorInputSection">
-        <div class="curve-section-header">
-          <h3>Predictor input (score-derived, 5 channels &mdash; only the 2-stage system's
-            predictor is conditioned on this)</h3>
-        </div>
+      <details class="plot-details" id="predictorInputSection">
+        <summary>Predictor input (score-derived, 5 channels &mdash; only the 2-stage
+          system's predictor is conditioned on this)</summary>
         <div id="inputCurves" class="curve-group"></div>
-      </div>
+      </details>
 
-      <div id="synthInputSection">
-        <div class="curve-section-header">
-          <h3 id="synthInputTitle">Synthesizer input</h3>
-        </div>
+      <details class="plot-details" id="synthInputSection">
+        <summary id="synthInputTitle">Synthesizer input</summary>
         <p id="synthInputNote" class="model-description" hidden></p>
         <div id="synthInputCurves" class="curve-group"></div>
-      </div>
+      </details>
 
-      <div class="curve-section-header">
-        <h3>Output comparison &mdash; pitch/envelope extracted from each system's own
-          rendered audio for this string</h3>
-      </div>
-      <p class="model-description">Gray background: the real recording's own voiced mask
-        &mdash; where a note is actually sounding, ground truth. Click a legend swatch
-        below to show/hide that system's line.</p>
-      <div class="comparison-grid">
-        <div class="comparison-col">
-          <div class="comparison-title">Pitch (Hz)</div>
-          <canvas id="comparePitchCanvas"></canvas>
+      <details class="plot-details" id="comparisonSection">
+        <summary>Output comparison &mdash; pitch/envelope extracted from each system's
+          own rendered audio for this string</summary>
+        <p class="model-description">Gray background: the real recording's own voiced
+          mask &mdash; where a note is actually sounding, ground truth. Click a legend
+          swatch below to show/hide that system's line.</p>
+        <div class="comparison-grid">
+          <div class="comparison-col">
+            <div class="comparison-title">Pitch (Hz)</div>
+            <canvas id="comparePitchCanvas"></canvas>
+          </div>
+          <div class="comparison-col">
+            <div class="comparison-title">Envelope (log-RMS)</div>
+            <canvas id="compareEnvelopeCanvas"></canvas>
+          </div>
         </div>
-        <div class="comparison-col">
-          <div class="comparison-title">Envelope (log-RMS)</div>
-          <canvas id="compareEnvelopeCanvas"></canvas>
-        </div>
-      </div>
-      <div id="compareLegend" class="string-legend"></div>
+        <div id="compareLegend" class="string-legend"></div>
+      </details>
     </div>
   </section>
 </main>

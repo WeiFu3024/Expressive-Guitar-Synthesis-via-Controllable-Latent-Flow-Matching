@@ -819,6 +819,16 @@ async function main() {
   registerExclusive(el("queryAudio"));
   registerExclusive(el("modelAudio"));
 
+  // Collapsed <details> render their children at zero size, so canvases built while
+  // folded need a fresh redraw once actually visible -- otherwise they stay stuck at
+  // the fallback ~200px width from before the section was ever opened.
+  for (const id of ["predictorInputSection", "synthInputSection", "comparisonSection"]) {
+    const details = el(id);
+    details.addEventListener("toggle", () => {
+      if (details.open) renderModelDependentCurves();
+    });
+  }
+
   onPlayhead((t) => {
     lastPlayheadT = t;
     drawMidiRoll(t);
