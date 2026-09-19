@@ -106,6 +106,37 @@ select {
   vertical-align: middle;
 }
 
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 0.15s ease;
+}
+
+.legend-item .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.legend-item:hover { opacity: 0.8; }
+
+.legend-item.off {
+  opacity: 0.35;
+  text-decoration: line-through;
+}
+
 .audio-block {
   margin-top: 16px;
 }

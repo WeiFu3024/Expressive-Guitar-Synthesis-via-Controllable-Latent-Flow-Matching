@@ -85,6 +85,11 @@ const ARM_COMPARE_COLORS = {
   ddsp_guitar: "#b57bff",
 };
 
+// Per-legend-item click toggles a system's line on/off in both comparison canvases, so
+// two curves can be isolated for a direct A/B read. All visible by default.
+const compareVisible = {};
+for (const arm of COMPARE_ORDER) compareVisible[arm] = true;
+
 // ---------------------------------------------------------------------------
 // Exclusive audio playback: never two clips at once.
 // ---------------------------------------------------------------------------
@@ -125,6 +130,8 @@ let currentModel = MODELS[0].id;
 let currentString = 1;
 let currentNotes = null; // {"1": [...], ...}
 let currentCurves = null; // parsed string<N>.json: {inputs, target_gt, synth_input, comparison}
+let lastPlayheadT = null; // last active playback time, kept while paused so a legend
+                           // toggle mid-pause redraws at the same position instead of blank
 
 const el = (id) => document.getElementById(id);
 
@@ -636,6 +643,7 @@ function drawComparisonPanel(canvas, seriesMap, playheadT) {
   let minV = Infinity;
   let maxV = -Infinity;
   for (const arm of COMPARE_ORDER) {
+    if (!compareVisible[arm]) continue;
     const s = seriesMap[arm];
     if (!s) continue;
     for (const val of s.v) {
@@ -658,6 +666,7 @@ function drawComparisonPanel(canvas, seriesMap, playheadT) {
   const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
 
   for (const arm of COMPARE_ORDER) {
+    if (!compareVisible[arm]) continue;
     const s = seriesMap[arm];
     if (!s) continue;
     ctx.strokeStyle = ARM_COMPARE_COLORS[arm];
@@ -675,13 +684,30 @@ function buildCompareLegend() {
   container.innerHTML = "";
   for (const arm of COMPARE_ORDER) {
     const meta = MODELS.find((m) => m.id === arm);
-    const span = document.createElement("span");
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "legend-item";
+    item.dataset.arm = arm;
     const swatch = document.createElement("span");
     swatch.className = "swatch";
     swatch.style.background = ARM_COMPARE_COLORS[arm];
-    span.appendChild(swatch);
-    span.appendChild(document.createTextNode(meta.label));
-    container.appendChild(span);
+    item.appendChild(swatch);
+    item.appendChild(document.createTextNode(meta.label));
+    item.title = "Click to show/hide this system's line";
+    item.addEventListener("click", () => {
+      compareVisible[arm] = !compareVisible[arm];
+      item.classList.toggle("off", !compareVisible[arm]);
+      redrawComparisonCanvases();
+    });
+    container.appendChild(item);
+  }
+}
+
+function redrawComparisonCanvases() {
+  const pitchCanvas = el("comparePitchCanvas");
+  const envCanvas = el("compareEnvelopeCanvas");
+  for (const entry of playheadCanvases) {
+    if (entry.canvas === pitchCanvas || entry.canvas === envCanvas) entry.draw(lastPlayheadT);
   }
 }
 
@@ -745,6 +771,7 @@ async function main() {
   registerExclusive(el("modelAudio"));
 
   onPlayhead((t) => {
+    lastPlayheadT = t;
     drawMidiRoll(t);
     redrawAllCurves(t);
   });
