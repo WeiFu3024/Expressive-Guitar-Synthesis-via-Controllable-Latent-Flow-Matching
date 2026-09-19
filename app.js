@@ -62,12 +62,13 @@ const ARM_COMPARE_COLORS = {
 };
 
 // Per-legend-item click toggles a system's line on/off in both comparison canvases, so
-// two curves can be isolated for a direct A/B read. All visible by default.
+// two curves can be isolated for a direct A/B read. All visible by default. Single
+// module-level state since only one "Single String Study" instance exists.
 const compareVisible = {};
 for (const arm of COMPARE_ORDER) compareVisible[arm] = true;
 
 // ---------------------------------------------------------------------------
-// Exclusive audio playback: never two clips at once.
+// Exclusive audio playback: never two clips at once, across every section.
 // ---------------------------------------------------------------------------
 
 let currentAudioEl = null;
@@ -80,50 +81,38 @@ function registerExclusive(el) {
 
 // ---------------------------------------------------------------------------
 // Shared playhead: whichever registered <audio> is currently playing drives every
-// visualization (MIDI roll + every curve/comparison panel) via one rAF loop.
+// registered canvas (MIDI rolls + every curve/comparison panel, across every section)
+// via one rAF loop.
 // ---------------------------------------------------------------------------
 
-const playheadListeners = [];
-function onPlayhead(fn) {
-  playheadListeners.push(fn);
-}
+let lastPlayheadT = null; // last active playback time, kept while paused so a legend
+                           // toggle mid-pause redraws at the same position instead of blank
 function tickPlayhead() {
   if (currentAudioEl && !currentAudioEl.paused) {
-    const t = currentAudioEl.currentTime;
-    for (const fn of playheadListeners) fn(t);
+    lastPlayheadT = currentAudioEl.currentTime;
+    redrawAllRegisteredCanvases(lastPlayheadT);
   }
   requestAnimationFrame(tickPlayhead);
 }
 requestAnimationFrame(tickPlayhead);
 
 // ---------------------------------------------------------------------------
-// State
+// Scroll-position preservation: selecting a model/string/sample can hide/show or resize
+// sections above whatever the user is currently looking at, and the browser has no way
+// to know what content the user cares about staying put -- it just leaves window.scrollY
+// numerically unchanged, which visually "jumps" to different content once the layout
+// above it grows/shrinks. This finds whichever stable landmark element's top edge is
+// closest to the viewport's top edge before the mutation, then nudges scroll after the
+// mutation so that same element lands at the same screen position again -- ephemeral
+// rebuilt content (individual curve rows/canvases) is deliberately excluded from the
+// candidate set since those get torn down and rebuilt, and <summary> elements are
+// excluded too since several <details> sections can themselves be hidden by the very
+// mutation being measured -- a hidden element's getBoundingClientRect() reports all
+// zeros, which would compute a bogus delta.
 // ---------------------------------------------------------------------------
 
-let manifest = null;
-let currentSample = null;
-let currentModel = MODELS[0].id;
-let currentString = 1;
-let currentNotes = null; // {"1": [...], ...}
-let currentCurves = null; // parsed string<N>.json: {inputs, target_gt, synth_input, comparison}
-let lastPlayheadT = null; // last active playback time, kept while paused so a legend
-                           // toggle mid-pause redraws at the same position instead of blank
-
-const el = (id) => document.getElementById(id);
-
-// Selecting a model/string can hide/show or resize sections above whatever the user is
-// currently looking at (e.g. "Predictor input" only exists for the 2-stage system), and
-// the browser has no way to know what content the user cares about staying put -- it
-// just leaves window.scrollY numerically unchanged, which visually "jumps" to different
-// content once the layout above it grows/shrinks. This finds whichever stable landmark
-// element's top edge is closest to the viewport's top edge before the mutation, then
-// nudges scroll after the mutation so that same element lands at the same screen
-// position again -- ephemeral rebuilt content (individual curve rows/canvases) is
-// deliberately excluded from the candidate set since those get torn down and rebuilt,
-// and <summary> elements are excluded too since two of the three <details> sections can
-// themselves be hidden by the very mutation being measured -- a hidden element's
-// getBoundingClientRect() reports all zeros, which would compute a bogus delta.
 const SCROLL_ANCHOR_SELECTOR = "h1, .panel, .audio-block, h3, .curve-section-header";
+
 function _captureScrollAnchor() {
   let anchor = null;
   let anchorTop = null;
@@ -151,10 +140,10 @@ function preserveScrollPosition(mutate) {
 }
 
 // Same idea, but spans an async sequence (e.g. loadSample's awaited fetch + nested
-// loadModel/loadCurves calls) as ONE before/after measurement instead of several small
-// ones -- sequential separate captures can each pick a slightly different anchor as
-// intermediate mutations shift what's closest to the viewport top, compounding into a
-// residual drift none of them individually catches.
+// loadCurves calls) as ONE before/after measurement instead of several small ones --
+// sequential separate captures can each pick a slightly different anchor as intermediate
+// mutations shift what's closest to the viewport top, compounding into a residual drift
+// none of them individually catches.
 async function preserveScrollPositionAsync(mutate) {
   const state = _captureScrollAnchor();
   await mutate();
@@ -162,8 +151,13 @@ async function preserveScrollPositionAsync(mutate) {
 }
 
 // ---------------------------------------------------------------------------
-// Data loading
+// Shared state / data loading
 // ---------------------------------------------------------------------------
+
+let manifest = null;
+let currentModel = MODELS[0].id; // shared across every section that has a model selector
+
+const el = (id) => document.getElementById(id);
 
 async function fetchJSON(path) {
   const res = await fetch(path);
@@ -173,80 +167,6 @@ async function fetchJSON(path) {
 
 async function loadManifest() {
   manifest = await fetchJSON("data/manifest.json");
-  const select = el("sampleSelect");
-  select.innerHTML = "";
-  for (const id of Object.keys(manifest.recordings)) {
-    const rec = manifest.recordings[id];
-    const opt = document.createElement("option");
-    opt.value = id;
-    const styleName = STYLE_NAMES[rec.style] || rec.style;
-    const practice = rec.tier === "practice" ? " \u00b7 practice" : "";
-    opt.textContent = `${id} \u2014 ${styleName}, ${rec.take}${practice}`;
-    select.appendChild(opt);
-  }
-  select.addEventListener("change", () => loadSample(select.value));
-}
-
-async function loadSample(id) {
-  // Switching samples must not leave a previous clip audible.
-  if (currentAudioEl) currentAudioEl.pause();
-  currentSample = id;
-  const rec = manifest.recordings[id];
-
-  await preserveScrollPositionAsync(async () => {
-    const styleName = STYLE_NAMES[rec.style] || rec.style;
-    el("sampleMeta").textContent =
-      `${styleName} \u00b7 player ${rec.player} \u00b7 ${rec.take} \u00b7 ${rec.duration_s.toFixed(2)}s` +
-      (rec.tier === "practice" ? " \u00b7 practice recording (unscored)" : "");
-
-    const query = el("queryAudio");
-    query.src = `data/${id}/audio/query.mp3`;
-    query.load();
-
-    currentNotes = await fetchJSON(`data/${id}/notes.json`);
-    drawMidiRoll();
-    buildStringLegend(rec.available_strings);
-    buildStringSelectorRow(rec.available_strings);
-
-    currentString = mostActiveString(rec.available_strings, currentNotes);
-
-    await loadModel(currentModel);
-    await loadCurves(currentString);
-  });
-}
-
-async function loadModel(modelId) {
-  if (currentAudioEl === el("modelAudio")) currentAudioEl.pause();
-  if (currentAudioEl === el("stringAudio")) currentAudioEl.pause();
-  currentModel = modelId;
-  for (const btn of document.querySelectorAll(".model-select-group .pill-btn")) {
-    btn.classList.toggle("active", btn.dataset.model === modelId);
-  }
-
-  const audio = el("modelAudio");
-  audio.src = `data/${currentSample}/audio/${modelId}.mp3`;
-  audio.load();
-  updateStringAudio();
-
-  applyDefaultCompareVisibility(modelId);
-  renderModelDependentCurves();
-}
-
-function updateStringAudio() {
-  const audio = el("stringAudio");
-  audio.src = `data/${currentSample}/audio/strings/${currentModel}/string${currentString}.mp3`;
-  audio.load();
-}
-
-async function loadCurves(stringNum) {
-  if (currentAudioEl === el("stringAudio")) currentAudioEl.pause();
-  currentString = stringNum;
-  for (const btn of document.querySelectorAll("#stringSelectorRow .pill-btn")) {
-    btn.classList.toggle("active", parseInt(btn.dataset.string, 10) === stringNum);
-  }
-  updateStringAudio();
-  currentCurves = await fetchJSON(`data/${currentSample}/ctrl/string${stringNum}.json`);
-  renderModelDependentCurves();
 }
 
 // "Single String Study" defaults to whichever string actually carries the performance
@@ -267,11 +187,10 @@ function mostActiveString(availableStrings, notes) {
 }
 
 // ---------------------------------------------------------------------------
-// MIDI piano-roll visualizer
+// MIDI piano-roll visualizer -- generic: any section's own canvas/notes/duration.
 // ---------------------------------------------------------------------------
 
-function buildStringLegend(strings) {
-  const container = el("stringLegend");
+function buildStringLegend(container, strings) {
   container.innerHTML = "";
   for (const s of strings) {
     const span = document.createElement("span");
@@ -297,8 +216,7 @@ function niceTimeStep(duration) {
   return 5;
 }
 
-function drawMidiRoll(playheadT) {
-  const canvas = el("midiCanvas");
+function drawMidiRoll(canvas, notes, duration, playheadT) {
   const cssWidth = Math.max(canvas.clientWidth, 300);
   const cssHeight = 300;
   const dpr = window.devicePixelRatio || 1;
@@ -310,8 +228,7 @@ function drawMidiRoll(playheadT) {
   const height = cssHeight;
   ctx.clearRect(0, 0, width, height);
 
-  if (!currentNotes) return;
-  const duration = manifest.recordings[currentSample].duration_s;
+  if (!notes) return;
   const minPitch = MIDI_PITCH_MIN;
   const maxPitch = MIDI_PITCH_MAX;
 
@@ -360,10 +277,10 @@ function drawMidiRoll(playheadT) {
   // fixed, sane note thickness (independent of pitch-range span, which was the source of
   // the "incredibly thick" notes -- it used to scale with plotH / (maxPitch-minPitch))
   const noteH = 9;
-  for (const sKey of Object.keys(currentNotes)) {
+  for (const sKey of Object.keys(notes)) {
     const sIdx = parseInt(sKey, 10) - 1;
     ctx.fillStyle = STRING_COLORS[sIdx];
-    for (const n of currentNotes[sKey]) {
+    for (const n of notes[sKey]) {
       const x0 = xOf(n.start_s);
       const x1 = xOf(n.start_s + Math.max(n.dur_s, 0.02));
       const y = yOf(n.pitch) - noteH / 2;
@@ -408,6 +325,7 @@ function drawPlayhead(ctx, xOf, height, t, duration, yTop, yBottom) {
 // registers a draw(playheadT) closure here, keyed by its own canvas element (dedup) and
 // by a "container" used to bulk-evict stale entries when a container's canvases are
 // thrown away and rebuilt from scratch (buildCurveGroup, buildSynthInputCurves, ...).
+// MIDI rolls register here too, one per section, alongside every curve/comparison panel.
 // ---------------------------------------------------------------------------
 
 const playheadCanvases = [];
@@ -425,12 +343,13 @@ function clearContainerCanvases(container) {
   }
 }
 
-function redrawAllCurves(playheadT) {
+function redrawAllRegisteredCanvases(playheadT) {
   for (const entry of playheadCanvases) entry.draw(playheadT);
 }
 
 // ---------------------------------------------------------------------------
-// Control-curve mini panels
+// Control-curve mini panels (Single String Study only, but kept as generic, duration-
+// parameterized functions rather than closures, so they stay easy to reason about).
 // ---------------------------------------------------------------------------
 
 function _addCurveRow(container, labelText) {
@@ -446,14 +365,14 @@ function _addCurveRow(container, labelText) {
   return canvas;
 }
 
-function buildCurveGroup(container, channels, dataByChannel) {
+function buildCurveGroup(container, channels, dataByChannel, duration) {
   container.innerHTML = "";
   clearContainerCanvases(container);
   for (const name of channels) {
     const chan = dataByChannel[name];
     if (!chan) continue;
     const canvas = _addCurveRow(container, chan.label);
-    const draw = (t) => drawCurvePanel(canvas, chan, name, t);
+    const draw = (t) => drawCurvePanel(canvas, chan, name, duration, t);
     registerPlayheadCanvas(canvas, container, draw);
     draw(null);
   }
@@ -508,7 +427,7 @@ function _drawYAxisTicks(ctx, minV, maxV, yOf, padL, padR, width) {
   }
 }
 
-function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
+function drawCurvePanel(canvas, chan, name, duration, playheadT, overlayChan) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(rect.width, 200);
@@ -521,14 +440,14 @@ function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
 
   const t = chan.t;
   const v = chan.v;
-  const duration = (currentCurves && currentCurves.duration_s) || (t.length ? t[t.length - 1] : 1);
+  const dur = duration || (t.length ? t[t.length - 1] : 1);
   const padT = 6;
   const padB = 6;
   const padL = Y_AXIS_PAD_L;
   const padR = 6;
   const plotH = height - padT - padB;
   const plotW = width - padL - padR;
-  const xOf = (tt) => padL + (tt / duration) * plotW;
+  const xOf = (tt) => padL + (tt / dur) * plotW;
 
   if (name === "voiced") {
     // binary block, matches plot_ctrl_preview.py's _plot_block: a filled gray span
@@ -557,7 +476,7 @@ function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
     scan(v);
     if (overlayChan) scan(overlayChan.v);
     if (!isFinite(minV)) {
-      drawPlayhead(ctx, xOf, height, playheadT, duration);
+      drawPlayhead(ctx, xOf, height, playheadT, dur);
       return;
     }
     if (minV === maxV) {
@@ -586,10 +505,10 @@ function drawCurvePanel(canvas, chan, name, playheadT, overlayChan) {
     _drawSeries(ctx, t, v, xOf, yOf);
   }
 
-  drawPlayhead(ctx, xOf, height, playheadT, duration);
+  drawPlayhead(ctx, xOf, height, playheadT, dur);
 }
 
-function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, playheadT) {
+function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, duration, playheadT) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(rect.width, 200);
@@ -600,11 +519,11 @@ function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, playheadT) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const duration = (currentCurves && currentCurves.duration_s) || 1;
+  const dur = duration || 1;
   const padL = Y_AXIS_PAD_L;
   const padR = 6;
   const plotW = width - padL - padR;
-  const xOf = (tt) => padL + (tt / duration) * plotW;
+  const xOf = (tt) => padL + (tt / dur) * plotW;
 
   // gray voiced blocks
   const t = voicedChan.t;
@@ -631,85 +550,38 @@ function drawOnsetVoicedPanel(canvas, voicedChan, onsetTimes, playheadT) {
     ctx.stroke();
   }
 
-  drawPlayhead(ctx, xOf, height, playheadT, duration);
+  drawPlayhead(ctx, xOf, height, playheadT, dur);
 }
 
-function buildSynthInputCurves(container, model) {
+function buildSynthInputCurves(container, model, curves) {
   container.innerHTML = "";
   clearContainerCanvases(container);
-  const synth = currentCurves.synth_input[model];
-  const overlay = model === "main_pipeline" ? currentCurves.target_gt : null;
+  const synth = curves.synth_input[model];
+  const overlay = model === "main_pipeline" ? curves.target_gt : null;
+  const duration = curves.duration_s;
 
   for (const name of TARGET_CHANNELS) {
     const chan = synth[name];
     const canvas = _addCurveRow(container, chan.label);
     const overlayChan = overlay ? overlay[name] : null;
-    const draw = (t) => drawCurvePanel(canvas, chan, name, t, overlayChan);
+    const draw = (t) => drawCurvePanel(canvas, chan, name, duration, t, overlayChan);
     registerPlayheadCanvas(canvas, container, draw);
     draw(null);
   }
 
   if (model === "main_pipeline") {
     const canvas = _addCurveRow(container, "onset (tick) / voiced (block) \u2014 fed to synth");
-    const draw = (t) => drawOnsetVoicedPanel(canvas, synth.voiced, synth.onset_t, t);
+    const draw = (t) => drawOnsetVoicedPanel(canvas, synth.voiced, synth.onset_t, duration, t);
     registerPlayheadCanvas(canvas, container, draw);
     draw(null);
   }
-}
-
-function renderModelDependentCurves() {
-  if (!currentCurves) return;
-
-  preserveScrollPosition(() => {
-    // Predictor input: only the 2-stage system's predictor is conditioned on this.
-    const predSection = el("predictorInputSection");
-    const inputGroup = el("inputCurves");
-    if (currentModel === "main_pipeline") {
-      predSection.hidden = false;
-      buildCurveGroup(inputGroup, INPUT_CHANNELS, currentCurves.inputs);
-    } else {
-      predSection.hidden = true;
-      inputGroup.innerHTML = "";
-      clearContainerCanvases(inputGroup);
-    }
-
-    // Synthesizer input: differs per system, ddsp-guitar shows nothing at all.
-    const synthSection = el("synthInputSection");
-    const title = el("synthInputTitle");
-    const note = el("synthInputNote");
-    const group = el("synthInputCurves");
-    group.innerHTML = "";
-    clearContainerCanvases(group);
-
-    if (currentModel === "ddsp_guitar") {
-      synthSection.hidden = true;
-    } else {
-      synthSection.hidden = false;
-      if (currentModel === "main_pipeline") {
-        title.textContent = "Synthesizer input";
-        note.hidden = false;
-        note.textContent = "Faint dashed line: ground-truth, not fed to the synth";
-        buildSynthInputCurves(group, "main_pipeline");
-      } else if (currentModel === "velocity_joint_peak") {
-        title.textContent = "Synthesizer input";
-        note.hidden = true;
-        buildSynthInputCurves(group, "velocity_joint_peak");
-      } else if (currentModel === "ground_truth") {
-        title.textContent = "Ground truth curve";
-        note.hidden = true;
-        buildCurveGroup(group, TARGET_CHANNELS, currentCurves.target_gt);
-      }
-    }
-
-    renderComparisonPlot();
-  });
 }
 
 // ---------------------------------------------------------------------------
 // Output comparison: pitch/envelope re-extracted from each system's own rendered audio.
 // ---------------------------------------------------------------------------
 
-function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
+function drawComparisonPanel(canvas, seriesMap, duration, playheadT, voicedMask) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(rect.width, 200);
@@ -720,14 +592,14 @@ function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const duration = (currentCurves && currentCurves.duration_s) || 1;
+  const dur = duration || 1;
   const padL = Y_AXIS_PAD_L;
   const padR = 6;
   const padT = 8;
   const padB = 8;
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
-  const xOf = (tt) => padL + (tt / duration) * plotW;
+  const xOf = (tt) => padL + (tt / dur) * plotW;
 
   // faint gray background wherever the real recording actually has a note sounding
   // (ground-truth voiced mask), drawn first so every line stays fully legible on top.
@@ -759,7 +631,7 @@ function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
     }
   }
   if (!isFinite(minV)) {
-    drawPlayhead(ctx, xOf, height, playheadT, duration, padT, height - padB);
+    drawPlayhead(ctx, xOf, height, playheadT, dur, padT, height - padB);
     return;
   }
   if (minV === maxV) {
@@ -784,46 +656,14 @@ function drawComparisonPanel(canvas, seriesMap, playheadT, voicedMask) {
   }
   ctx.globalAlpha = 1;
 
-  drawPlayhead(ctx, xOf, height, playheadT, duration, padT, height - padB);
+  drawPlayhead(ctx, xOf, height, playheadT, dur, padT, height - padB);
 }
 
-function buildCompareLegend() {
-  const container = el("compareLegend");
-  container.innerHTML = "";
-  for (const arm of COMPARE_ORDER) {
-    const meta = MODELS.find((m) => m.id === arm);
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "legend-item";
-    item.dataset.arm = arm;
-    const swatch = document.createElement("span");
-    swatch.className = "swatch";
-    swatch.style.background = ARM_COMPARE_COLORS[arm];
-    item.appendChild(swatch);
-    item.appendChild(document.createTextNode(meta.label));
-    item.title = "Click to show/hide this system's line";
-    item.addEventListener("click", () => {
-      compareVisible[arm] = !compareVisible[arm];
-      item.classList.toggle("off", !compareVisible[arm]);
-      redrawComparisonCanvases();
-    });
-    container.appendChild(item);
-  }
-}
-
-function redrawComparisonCanvases() {
-  const pitchCanvas = el("comparePitchCanvas");
-  const envCanvas = el("compareEnvelopeCanvas");
-  for (const entry of playheadCanvases) {
-    if (entry.canvas === pitchCanvas || entry.canvas === envCanvas) entry.draw(lastPlayheadT);
-  }
-}
-
-// Default comparison-plot visibility: ground truth plus whichever model tab is active,
-// so switching models re-centers the comparison on "reference vs. this system" without
-// the other two systems cluttering the initial view. Selecting ground-truth itself has
-// no distinct "other system" to pair it with, so that case opens all four instead.
-// Clicking a legend item still overrides this per the usual toggle behavior.
+// Default comparison-plot visibility: ground truth plus whichever model tab is active, so
+// switching models re-centers the comparison on "reference vs. this system" without the
+// other two systems cluttering the initial view. Selecting ground-truth itself has no
+// distinct "other system" to pair it with, so that case opens all four instead. Clicking
+// a legend item still overrides this per the usual toggle behavior.
 function defaultCompareVisible(modelId) {
   const vis = {};
   if (modelId === "ground_truth") {
@@ -836,44 +676,26 @@ function defaultCompareVisible(modelId) {
   return vis;
 }
 
-function applyDefaultCompareVisibility(modelId) {
-  const defaults = defaultCompareVisible(modelId);
-  for (const arm of COMPARE_ORDER) compareVisible[arm] = defaults[arm];
-  updateLegendButtonStates();
-}
-
-function updateLegendButtonStates() {
-  for (const btn of document.querySelectorAll("#compareLegend .legend-item")) {
-    btn.classList.toggle("off", !compareVisible[btn.dataset.arm]);
-  }
-}
-
-function renderComparisonPlot() {
-  const comp = currentCurves.comparison;
-  const voicedMask = currentCurves.voiced_gt;
-  const pitchCanvas = el("comparePitchCanvas");
-  const envCanvas = el("compareEnvelopeCanvas");
-
-  const pitchSeries = {};
-  const envSeries = {};
-  for (const arm of COMPARE_ORDER) {
-    pitchSeries[arm] = comp[arm].pitch;
-    envSeries[arm] = comp[arm].envelope;
-  }
-
-  const drawPitch = (t) => drawComparisonPanel(pitchCanvas, pitchSeries, t, voicedMask);
-  const drawEnv = (t) => drawComparisonPanel(envCanvas, envSeries, t, voicedMask);
-  registerPlayheadCanvas(pitchCanvas, pitchCanvas, drawPitch);
-  registerPlayheadCanvas(envCanvas, envCanvas, drawEnv);
-  drawPitch(null);
-  drawEnv(null);
-}
-
 // ---------------------------------------------------------------------------
-// Wiring
+// Model selector: one shared currentModel, built into every ".model-select-group" row
+// found anywhere on the page (Full Mix Study's and Single String Study's each get their
+// own row/DOM, but a click on either updates the same state and both rows' active pill).
 // ---------------------------------------------------------------------------
 
-function buildModelSelectorRow() {
+const modelChangeListeners = [];
+function onModelChange(fn) {
+  modelChangeListeners.push(fn);
+}
+
+function setModel(modelId) {
+  currentModel = modelId;
+  for (const btn of document.querySelectorAll(".model-select-group .pill-btn")) {
+    btn.classList.toggle("active", btn.dataset.model === modelId);
+  }
+  for (const fn of modelChangeListeners) fn(modelId);
+}
+
+function buildModelSelectorRows() {
   for (const container of document.querySelectorAll(".model-select-group")) {
     container.innerHTML = "";
     for (const m of MODELS) {
@@ -881,40 +703,287 @@ function buildModelSelectorRow() {
       btn.className = "pill-btn";
       btn.dataset.model = m.id;
       btn.textContent = m.label;
-      btn.addEventListener("click", () => loadModel(m.id));
+      btn.classList.toggle("active", m.id === currentModel);
+      btn.addEventListener("click", () => setModel(m.id));
       container.appendChild(btn);
     }
   }
 }
 
-function buildStringSelectorRow(strings) {
-  const container = el("stringSelectorRow");
-  container.innerHTML = "";
-  for (const s of strings) {
-    const btn = document.createElement("button");
-    btn.className = "pill-btn";
-    btn.dataset.string = s;
-    btn.title = `String ${s} (${STRING_NAMES[s - 1]})`;
-    btn.textContent = String(s);
-    btn.addEventListener("click", () => loadCurves(s));
-    container.appendChild(btn);
+// ---------------------------------------------------------------------------
+// Reusable per-section sample picker: each section owns its own <select>/meta/MIDI
+// canvas/legend, decoupled from every other section's currently-selected sample.
+// ---------------------------------------------------------------------------
+
+function createSamplePicker(root) {
+  const selectEl = root.querySelector(".sample-select");
+  const metaEl = root.querySelector(".sample-meta");
+  const midiCanvas = root.querySelector(".midi-canvas");
+  const legendEl = root.querySelector(".midi-legend");
+  const state = { sample: null, notes: null, duration: 0 };
+
+  function populateOptions() {
+    selectEl.innerHTML = "";
+    for (const id of Object.keys(manifest.recordings)) {
+      const rec = manifest.recordings[id];
+      const opt = document.createElement("option");
+      opt.value = id;
+      const styleName = STYLE_NAMES[rec.style] || rec.style;
+      const practice = rec.tier === "practice" ? " \u00b7 practice" : "";
+      opt.textContent = `${id} \u2014 ${styleName}, ${rec.take}${practice}`;
+      selectEl.appendChild(opt);
+    }
   }
+
+  function redrawMidi(t) {
+    if (state.notes) drawMidiRoll(midiCanvas, state.notes, state.duration, t ?? null);
+  }
+
+  async function selectSample(id, onLoaded) {
+    state.sample = id;
+    selectEl.value = id;
+    const rec = manifest.recordings[id];
+    state.duration = rec.duration_s;
+
+    await preserveScrollPositionAsync(async () => {
+      const styleName = STYLE_NAMES[rec.style] || rec.style;
+      metaEl.textContent =
+        `${styleName} \u00b7 player ${rec.player} \u00b7 ${rec.take} \u00b7 ${rec.duration_s.toFixed(2)}s` +
+        (rec.tier === "practice" ? " \u00b7 practice recording (unscored)" : "");
+
+      state.notes = await fetchJSON(`data/${id}/notes.json`);
+      buildStringLegend(legendEl, rec.available_strings);
+      registerPlayheadCanvas(midiCanvas, midiCanvas, redrawMidi);
+      redrawMidi(null);
+
+      await onLoaded(rec);
+    });
+  }
+
+  selectEl.addEventListener("change", () => selectSample(selectEl.value, onSelectHandler));
+  let onSelectHandler = async () => {};
+
+  return {
+    state,
+    populateOptions,
+    redrawMidi,
+    onSelect(fn) { onSelectHandler = fn; },
+    selectSample: (id) => selectSample(id, onSelectHandler),
+  };
 }
 
-async function main() {
-  buildModelSelectorRow();
-  buildCompareLegend();
-  await loadManifest();
+// ---------------------------------------------------------------------------
+// "1. Full Mix Study": Query hint + per-model mix audio, own sample/MIDI.
+// ---------------------------------------------------------------------------
 
-  registerExclusive(el("queryAudio"));
-  registerExclusive(el("modelAudio"));
-  registerExclusive(el("stringAudio"));
+function createMixStudy(rootId) {
+  const root = el(rootId);
+  const picker = createSamplePicker(root);
+  const queryAudio = root.querySelector(".query-audio");
+  const modelAudio = root.querySelector(".model-audio");
+
+  function refreshModelAudio() {
+    if (!picker.state.sample) return;
+    if (currentAudioEl === modelAudio) currentAudioEl.pause();
+    modelAudio.src = `data/${picker.state.sample}/audio/${currentModel}.mp3`;
+    modelAudio.load();
+  }
+
+  picker.onSelect(async () => {
+    if (currentAudioEl === queryAudio) currentAudioEl.pause();
+    queryAudio.src = `data/${picker.state.sample}/audio/query.mp3`;
+    queryAudio.load();
+    refreshModelAudio();
+  });
+
+  onModelChange(() => refreshModelAudio());
+
+  root.addEventListener("toggle", () => {
+    if (root.open) picker.redrawMidi(lastPlayheadT);
+  });
+
+  registerExclusive(queryAudio);
+  registerExclusive(modelAudio);
+
+  return { picker, loadSample: (id) => picker.selectSample(id) };
+}
+
+// ---------------------------------------------------------------------------
+// "2. Single String Study": own sample/MIDI, own model selector row (synced state),
+// string selector, string audio, predictor/synth input, and re-extracted comparison.
+// ---------------------------------------------------------------------------
+
+function createSingleStringStudy(rootId) {
+  const root = el(rootId);
+  const picker = createSamplePicker(root);
+  const stringSelectorRow = root.querySelector("#stringSelectorRow");
+  const stringAudio = root.querySelector("#stringAudio");
+  const predSection = root.querySelector("#predictorInputSection");
+  const inputGroup = root.querySelector("#inputCurves");
+  const synthSection = root.querySelector("#synthInputSection");
+  const synthTitle = root.querySelector("#synthInputTitle");
+  const synthNote = root.querySelector("#synthInputNote");
+  const synthGroup = root.querySelector("#synthInputCurves");
+  const comparisonDetails = root.querySelector("#comparisonSection");
+  const comparePitchCanvas = root.querySelector("#comparePitchCanvas");
+  const compareEnvCanvas = root.querySelector("#compareEnvelopeCanvas");
+  const compareLegendEl = root.querySelector("#compareLegend");
+
+  const state = { string: 1, curves: null };
+
+  function buildStringSelectorRow(strings) {
+    stringSelectorRow.innerHTML = "";
+    for (const s of strings) {
+      const btn = document.createElement("button");
+      btn.className = "pill-btn";
+      btn.dataset.string = s;
+      btn.title = `String ${s} (${STRING_NAMES[s - 1]})`;
+      btn.textContent = String(s);
+      btn.addEventListener("click", () => loadCurves(s));
+      stringSelectorRow.appendChild(btn);
+    }
+  }
+
+  function updateStringAudio() {
+    if (!picker.state.sample) return;
+    if (currentAudioEl === stringAudio) currentAudioEl.pause();
+    stringAudio.src = `data/${picker.state.sample}/audio/strings/${currentModel}/string${state.string}.mp3`;
+    stringAudio.load();
+  }
+
+  async function loadCurves(stringNum) {
+    if (currentAudioEl === stringAudio) currentAudioEl.pause();
+    state.string = stringNum;
+    for (const btn of stringSelectorRow.querySelectorAll(".pill-btn")) {
+      btn.classList.toggle("active", parseInt(btn.dataset.string, 10) === stringNum);
+    }
+    updateStringAudio();
+    state.curves = await fetchJSON(`data/${picker.state.sample}/ctrl/string${stringNum}.json`);
+    renderModelDependentCurves();
+  }
+
+  function renderModelDependentCurves() {
+    if (!state.curves) return;
+    const duration = state.curves.duration_s;
+
+    preserveScrollPosition(() => {
+      // Predictor input: only the 2-stage system's predictor is conditioned on this.
+      if (currentModel === "main_pipeline") {
+        predSection.hidden = false;
+        buildCurveGroup(inputGroup, INPUT_CHANNELS, state.curves.inputs, duration);
+      } else {
+        predSection.hidden = true;
+        inputGroup.innerHTML = "";
+        clearContainerCanvases(inputGroup);
+      }
+
+      // Synthesizer input: differs per system, ddsp-guitar shows nothing at all.
+      synthGroup.innerHTML = "";
+      clearContainerCanvases(synthGroup);
+
+      if (currentModel === "ddsp_guitar") {
+        synthSection.hidden = true;
+      } else {
+        synthSection.hidden = false;
+        if (currentModel === "main_pipeline") {
+          synthTitle.textContent = "Synthesizer input";
+          synthNote.hidden = false;
+          synthNote.textContent = "Faint dashed line: ground-truth, not fed to the synth";
+          buildSynthInputCurves(synthGroup, "main_pipeline", state.curves);
+        } else if (currentModel === "velocity_joint_peak") {
+          synthTitle.textContent = "Synthesizer input";
+          synthNote.hidden = true;
+          buildSynthInputCurves(synthGroup, "velocity_joint_peak", state.curves);
+        } else if (currentModel === "ground_truth") {
+          synthTitle.textContent = "Ground truth curve";
+          synthNote.hidden = true;
+          buildCurveGroup(synthGroup, TARGET_CHANNELS, state.curves.target_gt, duration);
+        }
+      }
+
+      renderComparisonPlot();
+    });
+  }
+
+  function buildCompareLegend() {
+    compareLegendEl.innerHTML = "";
+    for (const arm of COMPARE_ORDER) {
+      const meta = MODELS.find((m) => m.id === arm);
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "legend-item";
+      item.dataset.arm = arm;
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = ARM_COMPARE_COLORS[arm];
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode(meta.label));
+      item.title = "Click to show/hide this system's line";
+      item.addEventListener("click", () => {
+        compareVisible[arm] = !compareVisible[arm];
+        item.classList.toggle("off", !compareVisible[arm]);
+        redrawComparisonCanvases();
+      });
+      compareLegendEl.appendChild(item);
+    }
+  }
+
+  function redrawComparisonCanvases() {
+    for (const entry of playheadCanvases) {
+      if (entry.canvas === comparePitchCanvas || entry.canvas === compareEnvCanvas) {
+        entry.draw(lastPlayheadT);
+      }
+    }
+  }
+
+  function updateLegendButtonStates() {
+    for (const btn of compareLegendEl.querySelectorAll(".legend-item")) {
+      btn.classList.toggle("off", !compareVisible[btn.dataset.arm]);
+    }
+  }
+
+  function applyDefaultCompareVisibility(modelId) {
+    const defaults = defaultCompareVisible(modelId);
+    for (const arm of COMPARE_ORDER) compareVisible[arm] = defaults[arm];
+    updateLegendButtonStates();
+  }
+
+  function renderComparisonPlot() {
+    const comp = state.curves.comparison;
+    const voicedMask = state.curves.voiced_gt;
+    const duration = state.curves.duration_s;
+
+    const pitchSeries = {};
+    const envSeries = {};
+    for (const arm of COMPARE_ORDER) {
+      pitchSeries[arm] = comp[arm].pitch;
+      envSeries[arm] = comp[arm].envelope;
+    }
+
+    const drawPitch = (t) => drawComparisonPanel(comparePitchCanvas, pitchSeries, duration, t, voicedMask);
+    const drawEnv = (t) => drawComparisonPanel(compareEnvCanvas, envSeries, duration, t, voicedMask);
+    registerPlayheadCanvas(comparePitchCanvas, comparePitchCanvas, drawPitch);
+    registerPlayheadCanvas(compareEnvCanvas, compareEnvCanvas, drawEnv);
+    drawPitch(null);
+    drawEnv(null);
+  }
+
+  picker.onSelect(async (rec) => {
+    buildStringSelectorRow(rec.available_strings);
+    const target = mostActiveString(rec.available_strings, picker.state.notes);
+    await loadCurves(target);
+  });
+
+  onModelChange((modelId) => {
+    updateStringAudio();
+    applyDefaultCompareVisibility(modelId);
+    renderModelDependentCurves();
+  });
 
   // Collapsed <details> render their children at zero size, so canvases built while
-  // folded need a fresh redraw once actually visible -- otherwise they stay stuck at
-  // the fallback ~200px width from before the section was ever opened.
-  for (const id of ["predictorInputSection", "synthInputSection", "comparisonSection"]) {
-    const details = el(id);
+  // folded need a fresh redraw once actually visible -- otherwise they stay stuck at the
+  // fallback ~200px width from before the section was ever opened.
+  for (const details of [predSection, synthSection, comparisonDetails]) {
     details.addEventListener("toggle", () => {
       if (details.open) renderModelDependentCurves();
     });
@@ -922,33 +991,49 @@ async function main() {
 
   // Entering "Single String Study" folds "Full Mix Study" out of the way so the reader
   // can focus on the string-level comparison -- not locked, they can still reopen it.
-  // Also redraws: a nested predictor/synth/comparison section left open from a previous
-  // visit rendered its canvases at fallback size while THIS outer section was collapsed
-  // (collapsed <details> content has zero layout size regardless of a descendant's own
-  // open state), so its own "opened" redraw never fired for the current dimensions.
-  el("singleStringSection").addEventListener("toggle", () => {
-    if (!el("singleStringSection").open) return;
+  // Also redraws: this section's own MIDI roll and any nested predictor/synth/comparison
+  // section left open from a previous visit rendered at fallback size while THIS outer
+  // section was collapsed (collapsed <details> content has zero layout size regardless
+  // of a descendant's own open state).
+  root.addEventListener("toggle", () => {
+    if (!root.open) return;
     preserveScrollPosition(() => {
-      if (el("fullMixSection").open) el("fullMixSection").open = false;
+      const fullMix = el("fullMixSection");
+      if (fullMix && fullMix.open) fullMix.open = false;
+      picker.redrawMidi(lastPlayheadT);
       renderModelDependentCurves();
     });
   });
 
-  onPlayhead((t) => {
-    lastPlayheadT = t;
-    drawMidiRoll(t);
-    redrawAllCurves(t);
-  });
+  buildCompareLegend();
+  registerExclusive(stringAudio);
+
+  return { picker, loadSample: (id) => picker.selectSample(id) };
+}
+
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
+
+async function main() {
+  await loadManifest();
+
+  const mixStudy = createMixStudy("fullMixSection");
+  const singleStringStudy = createSingleStringStudy("singleStringSection");
+
+  buildModelSelectorRows();
+
+  mixStudy.picker.populateOptions();
+  singleStringStudy.picker.populateOptions();
 
   window.addEventListener("resize", () => {
-    const t = currentAudioEl && !currentAudioEl.paused ? currentAudioEl.currentTime : 0;
-    drawMidiRoll(t);
-    redrawAllCurves(t);
+    const t = currentAudioEl && !currentAudioEl.paused ? currentAudioEl.currentTime : lastPlayheadT;
+    redrawAllRegisteredCanvases(t);
   });
 
   const firstSample = Object.keys(manifest.recordings)[0];
-  el("sampleSelect").value = firstSample;
-  await loadSample(firstSample);
+  await mixStudy.loadSample(firstSample);
+  await singleStringStudy.loadSample(firstSample);
 }
 
 main();

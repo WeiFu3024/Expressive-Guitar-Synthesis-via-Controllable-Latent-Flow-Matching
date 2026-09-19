@@ -14,21 +14,21 @@
 
 <main>
   <section class="panel listening-area" id="listeningArea">
-    <div class="midi-viz">
-      <canvas id="midiCanvas" height="300"></canvas>
-    </div>
-    <div id="stringLegend" class="string-legend"></div>
-
-    <div class="sample-picker-row">
-      <label for="sampleSelect">Sample</label>
-      <select id="sampleSelect"></select>
-      <span id="sampleMeta" class="sample-meta"></span>
-    </div>
-
     <details class="plot-details section-details" id="fullMixSection" open>
       <summary>1. Full Mix Study</summary>
       <p class="model-description">Select a sample and compare the audio of each model
         output.</p>
+
+      <div class="midi-viz">
+        <canvas class="midi-canvas" height="300"></canvas>
+      </div>
+      <div class="midi-legend"></div>
+
+      <div class="sample-picker-row">
+        <label>Sample</label>
+        <select class="sample-select"></select>
+        <span class="sample-meta"></span>
+      </div>
 
       <div class="audio-block">
         <div class="audio-block-label">
@@ -36,15 +36,15 @@
           <span class="hint-text">FluidSynth render of the score MIDI &mdash; a content
             hint, not a rated system.</span>
         </div>
-        <audio id="queryAudio" controls preload="none"></audio>
+        <audio class="query-audio" controls preload="none"></audio>
       </div>
 
       <div class="audio-block">
         <div class="audio-block-label">
           <strong>Model output</strong>
-          <div class="pill-row model-select-group" id="modelSelectorRow"></div>
+          <div class="pill-row model-select-group"></div>
         </div>
-        <audio id="modelAudio" controls preload="none"></audio>
+        <audio class="model-audio" controls preload="none"></audio>
       </div>
     </details>
 
@@ -53,10 +53,21 @@
       <p class="model-description">Please select a fixed target audio and fixed target
         string, compare the information between the different model.</p>
 
+      <div class="midi-viz">
+        <canvas class="midi-canvas" height="300"></canvas>
+      </div>
+      <div class="midi-legend"></div>
+
+      <div class="sample-picker-row">
+        <label>Sample</label>
+        <select class="sample-select"></select>
+        <span class="sample-meta"></span>
+      </div>
+
       <div class="audio-block">
         <div class="audio-block-label">
           <strong>Model</strong>
-          <div class="pill-row model-select-group" id="modelSelectorRow2"></div>
+          <div class="pill-row model-select-group"></div>
         </div>
       </div>
 

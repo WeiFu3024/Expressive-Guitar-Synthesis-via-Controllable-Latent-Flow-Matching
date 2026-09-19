@@ -84,7 +84,8 @@ select {
   border: 1px solid var(--panel-border);
 }
 
-.string-legend {
+.string-legend,
+.midi-legend {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
@@ -93,7 +94,8 @@ select {
   color: var(--muted);
 }
 
-.string-legend .swatch {
+.string-legend .swatch,
+.midi-legend .swatch {
   display: inline-block;
   width: 10px;
   height: 10px;
