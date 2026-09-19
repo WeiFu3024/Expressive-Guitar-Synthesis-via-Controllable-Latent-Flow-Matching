@@ -73,19 +73,8 @@
         <audio id="stringAudio" controls preload="none"></audio>
       </div>
 
-      <details class="plot-details" id="predictorInputSection">
-        <summary>Predictor input</summary>
-        <div id="inputCurves" class="curve-group"></div>
-      </details>
-
-      <details class="plot-details" id="synthInputSection">
-        <summary id="synthInputTitle">Synthesizer input</summary>
-        <p id="synthInputNote" class="model-description" hidden></p>
-        <div id="synthInputCurves" class="curve-group"></div>
-      </details>
-
-      <details class="plot-details" id="comparisonSection">
-        <summary>Output comparison</summary>
+      <details class="plot-details" id="comparisonSection" open>
+        <summary>Re-Extracted Audio Feature</summary>
         <p class="model-description">Gray background: where a note is actually
           sounding.</p>
         <div class="comparison-grid">
@@ -99,6 +88,17 @@
           </div>
         </div>
         <div id="compareLegend" class="string-legend"></div>
+      </details>
+
+      <details class="plot-details" id="predictorInputSection">
+        <summary>Predictor input</summary>
+        <div id="inputCurves" class="curve-group"></div>
+      </details>
+
+      <details class="plot-details" id="synthInputSection">
+        <summary id="synthInputTitle">Synthesizer input</summary>
+        <p id="synthInputNote" class="model-description" hidden></p>
+        <div id="synthInputCurves" class="curve-group"></div>
       </details>
     </details>
   </section>
