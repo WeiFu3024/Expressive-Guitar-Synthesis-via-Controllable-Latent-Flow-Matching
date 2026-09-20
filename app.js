@@ -917,7 +917,7 @@ function createSamplePicker(root) {
 // reopen any of them (multiple can be open simultaneously if the reader does that).
 // ---------------------------------------------------------------------------
 
-const SECTION_IDS = ["fullMixSection", "singleStringSection", "velocityPredictionSection"];
+const SECTION_IDS = ["fullMixSection", "singleStringSection", "velocityPredictionSection", "longSampleSection"];
 function foldOtherSections(exceptId) {
   for (const id of SECTION_IDS) {
     if (id === exceptId) continue;
@@ -1329,6 +1329,79 @@ function createVelocityStudy(rootId) {
 }
 
 // ---------------------------------------------------------------------------
+// "4. Unseen Long Audio Inference": four whole GAPS-dataset renders, deliberately no
+// sample picker / MIDI roll / curves -- just fixed audio players, per this section's own
+// request. Static content driven off manifest.long_samples (see
+// scripts/pipeline/export_demo_assets.py's export_long_samples).
+// ---------------------------------------------------------------------------
+
+const LONG_SAMPLE_DETAIL_PARAGRAPHS = [
+  "These four pieces are real GuitarPro/MusicXML scores from the GAPS dataset (004_JSswc, " +
+    "008_PSswc, 009_xSswc, 010_QSswc) \u2014 material none of the three checkpoints below saw " +
+    "during training, with no recording, no annotations, and no ground-truth curves attached. " +
+    "Each one is rendered end-to-end by the same frozen note-gain predictor, pitch/envelope " +
+    "predictor, and synth decoder used everywhere else on this page.",
+  "Real GAPS pieces run 60-300s, far past what any of the three models were trained on " +
+    "(GuitarSet recordings top out around 45s, and the middle model only ever saw random " +
+    "6-12s crops), so each stage handles long inputs differently. Velocity prediction is " +
+    "fed the whole score's note sequence in one shot \u2014 it operates per note, not per " +
+    "time-window, so there is nothing to chunk. Performance (pitch/envelope) prediction " +
+    "splits the score into chunks cut only at note boundaries, carries about a second of " +
+    "already-decided context into the next chunk, and prefixes every chunk after the first " +
+    "with 0.5s of silence \u2014 so each chunk looks like the start of a recording to a model " +
+    "that was only ever validated starting from one. Synthesis also renders in overlapping " +
+    "windows, but every window is sliced from the same global random noise rather than " +
+    "restarting from independent noise, and overlapping regions are blended by averaging the " +
+    "latents themselves before decoding, so the six-string audio stays continuous across " +
+    "window boundaries instead of seaming or drifting.",
+];
+
+function createLongSampleSection(rootId) {
+  const root = el(rootId);
+  const listEl = root.querySelector("#longSampleList");
+  const detailEl = root.querySelector("#longSampleDetailText");
+
+  function build() {
+    listEl.innerHTML = "";
+    for (const sample of manifest.long_samples || []) {
+      const block = document.createElement("div");
+      block.className = "audio-block";
+      const label = document.createElement("div");
+      label.className = "audio-block-label";
+      const strong = document.createElement("strong");
+      strong.textContent = sample.label;
+      const hint = document.createElement("span");
+      hint.className = "hint-text";
+      hint.textContent = `${sample.duration_s.toFixed(1)}s \u00b7 ${sample.source_gp}`;
+      label.appendChild(strong);
+      label.appendChild(hint);
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.preload = "none";
+      audio.src = `data/long/${sample.id}.mp3`;
+      registerExclusive(audio);
+      block.appendChild(label);
+      block.appendChild(audio);
+      listEl.appendChild(block);
+    }
+
+    detailEl.innerHTML = "";
+    for (const text of LONG_SAMPLE_DETAIL_PARAGRAPHS) {
+      const p = document.createElement("p");
+      p.textContent = text;
+      detailEl.appendChild(p);
+    }
+  }
+
+  root.addEventListener("toggle", () => {
+    if (!root.open) return;
+    preserveScrollPosition(() => foldOtherSections("longSampleSection"));
+  });
+
+  build();
+}
+
+// ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
 
@@ -1338,6 +1411,7 @@ async function main() {
   const mixStudy = createMixStudy("fullMixSection");
   const singleStringStudy = createSingleStringStudy("singleStringSection");
   const velocityStudy = createVelocityStudy("velocityPredictionSection");
+  createLongSampleSection("longSampleSection");
 
   buildModelSelectorRows();
 

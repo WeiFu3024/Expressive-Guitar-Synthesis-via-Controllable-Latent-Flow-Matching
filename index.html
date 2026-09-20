@@ -172,6 +172,21 @@
       </div>
       <div id="velocityLegend" class="string-legend"></div>
     </details>
+
+    <details class="plot-details section-details" id="longSampleSection">
+      <summary>4. Unseen Long Audio Inference</summary>
+      <p class="model-description">Four real-length recordings (63-185s), rendered
+        end-to-end by the full 3-stage pipeline from MusicXML scores in the GAPS dataset
+        &mdash; unseen by any part of the system during training, played back whole, not
+        cropped to a short window.</p>
+
+      <div id="longSampleList"></div>
+
+      <details class="plot-details" id="longSampleDetailSection">
+        <summary>Long Sample Inference Detail</summary>
+        <div id="longSampleDetailText" class="model-description"></div>
+      </details>
+    </details>
   </section>
 </main>
 <script src="app.js"></script>
