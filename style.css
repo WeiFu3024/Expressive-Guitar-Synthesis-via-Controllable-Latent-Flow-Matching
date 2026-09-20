@@ -49,6 +49,13 @@ main {
   padding: 16px;
 }
 
+.abstract-heading {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+  letter-spacing: 0.02em;
+}
+
 .abstract {
   margin: 0 0 8px;
   color: var(--text);
