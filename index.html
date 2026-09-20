@@ -10,6 +10,24 @@
 
 <header class="page-header">
   <h1>Expressive Guitar Synthesis via Controllable Latent Flow Matching</h1>
+  <img class="architecture-figure" src="architecture.png" alt="Two-stage architecture: a
+    performance-control predictor (left) turns per-string score curves into predicted
+    pitch/envelope curves via an axial transformer encoder, and a latent flow-matching
+    decoder (right) renders those curves into six-string audio through an axial DiT, an
+    ODE solver, and a neural audio codec decoder.">
+  <p class="abstract">Realistic guitar synthesis requires both audio fidelity and
+    interpretable control over <em>how</em> notes are performed. Current systems achieve
+    one or the other: DDSP-based methods trade synthesis quality for controllability and
+    data efficiency, and vice versa for diffusion-based models. We propose a model that
+    separates control from rendering: a predictor estimates per-string performance
+    attributes from MIDI as an editable intermediate, which a latent flow-matching
+    decoder renders into audio. Two mechanisms make this design practical: a
+    conditioning encoder that re-encodes the predicted attributes together with exactly
+    known symbolic cues, so the decoder tolerates imperfect predictions, and gated
+    cross-string attention, which models the six strings jointly rather than
+    independently. Objective and subjective evaluations show that our system matches the
+    quality of diffusion-based baselines while retaining explicit control over
+    performance attributes.</p>
 </header>
 
 <main>
@@ -17,7 +35,9 @@
     <details class="plot-details section-details" id="fullMixSection" open>
       <summary>1. Full Mix Study</summary>
       <p class="model-description">Select a sample and compare the audio of each model
-        output.</p>
+        output. Click between the model pills to A/B the same sample rendered by each
+        system while the MIDI roll and query stay fixed &mdash; listen for overall audio
+        quality and naturalness.</p>
 
       <div class="midi-viz">
         <canvas class="midi-canvas" height="300"></canvas>
@@ -51,7 +71,10 @@
     <details class="plot-details section-details" id="singleStringSection">
       <summary>2. Single String Study</summary>
       <p class="model-description">Please select a fixed target audio and fixed target
-        string, compare the information between the different model.</p>
+        string, compare the information between the different model. Pick a model and a
+        string, then play that string's isolated audio while comparing it against the
+        re-extracted pitch/envelope curves below &mdash; click a legend entry to isolate
+        one system's line if the overlay gets busy.</p>
 
       <div class="midi-viz">
         <canvas class="midi-canvas" height="300"></canvas>
@@ -120,7 +143,11 @@
         pitch/envelope predictor and synth as the 2-stage system above, making a full
         3-stage pipeline. Select a sample, compare its mix audio against the 2-stage
         (ground-truth velocity) and ground-truth arms, and read the predicted vs.
-        ground-truth velocity curve for every string.</p>
+        ground-truth velocity curve for every string. Use the String pill or a legend
+        entry to focus the plot on one string, then compare the solid (predicted),
+        dotted (re-extracted from the rendered audio), and faint dashed (ground truth)
+        lines to judge whether the synth actually reached the loudness it was asked
+        for.</p>
 
       <div class="midi-viz">
         <canvas class="midi-canvas" height="300"></canvas>
@@ -178,7 +205,9 @@
       <p class="model-description">Four real-length recordings (63-185s), rendered
         end-to-end by the full 3-stage pipeline from MusicXML scores in the GAPS dataset
         &mdash; unseen by any part of the system during training, played back whole, not
-        cropped to a short window.</p>
+        cropped to a short window. There is no alternate system or ground truth to A/B
+        here &mdash; just listen for coherence over the full length, especially near the
+        chunk boundaries described below.</p>
 
       <div id="longSampleList"></div>
 

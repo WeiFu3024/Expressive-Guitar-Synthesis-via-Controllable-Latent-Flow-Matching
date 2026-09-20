@@ -37,6 +37,24 @@ main {
   margin: 0 0 14px;
 }
 
+.architecture-figure {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 4px 0 20px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.abstract {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 0.98rem;
+  line-height: 1.6;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--panel-border);
