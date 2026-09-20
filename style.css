@@ -40,8 +40,9 @@ main {
 .architecture-figure {
   display: block;
   width: 100%;
+  max-width: 640px;
   height: auto;
-  margin: 4px 0 20px;
+  margin: 4px auto 20px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 10px;
