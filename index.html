@@ -17,18 +17,17 @@
     ODE solver, and a neural audio codec decoder.">
   <h2 class="abstract-heading">Abstract</h2>
   <p class="abstract">Realistic guitar synthesis requires both audio fidelity and
-    interpretable control over <em>how</em> notes are performed. Current systems achieve
-    one or the other: DDSP-based methods trade synthesis quality for controllability and
-    data efficiency, and vice versa for diffusion-based models. We propose a model that
-    separates control from rendering: a predictor estimates per-string performance
-    attributes from MIDI as an editable intermediate, which a latent flow-matching
-    decoder renders into audio. Two mechanisms make this design practical: a
-    conditioning encoder that re-encodes the predicted attributes together with exactly
-    known symbolic cues, so the decoder tolerates imperfect predictions, and gated
-    cross-string attention, which models the six strings jointly rather than
-    independently. Objective and subjective evaluations show that our system matches the
-    quality of diffusion-based baselines while retaining explicit control over
-    performance attributes.</p>
+    interpretable control over <em>how</em> notes are performed. The input timed MIDI
+    events decide <em>what</em> is played but not <em>how</em>, leaving the continuous
+    within-note decisions of guitar performance&mdash;such as pitch inflection and
+    per-string articulation&mdash;unspecified. A model that directly maps MIDI to audio
+    must therefore realize the performance implicitly, and users are left with limited
+    control over the synthesized performance. We therefore propose a two-stage guitar
+    synthesis pipeline that predicts editable, per-string f<sub>0</sub> and amplitude
+    trajectories from timed note events and note-level dynamics, and renders them into
+    audio using latent flow matching. Experimental results show that the proposed system
+    outperforms a matched single-stage counterpart and DDSP-Guitar in control fidelity
+    and perceived quality, while keeping the controls editable.</p>
 </header>
 
 <main>
